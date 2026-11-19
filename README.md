@@ -42,8 +42,8 @@ MIT。版权与归属见 [LICENSE](LICENSE) 和 [NOTICE](NOTICE)。
 | `XIANGSU_LOCALAPPDATA` | 覆盖 `LOCALAPPDATA`。 |
 | `XIANGSU_MCP_URL` | 官方 MCP 地址。 |
 | `XIANGSU_MCP_PLUS_STATE` | 状态目录。默认是用户主目录下的 `.xiangsu-mcp-plus-win`。像塑进程通常拿不到这个变量，插件仍写默认目录；stdio 会同时查看默认目录。 |
-| `XIANGSU_ALLOW_PROJECTS` | 生命周期白名单，用 `|` 隔开的绝对路径。未列入的工程不能被打开、新建或关闭。也可以写在未纳入版本库的 `config.local.json` 的 `allowProjects` 数组里。 |
-| `XIANGSU_DENY_PROJECTS` | 黑名单，同样用 `|` 分隔，或写在 `config.local.json` 的 `denyProjects`。命中的目录优先于白名单。 |
+| `XIANGSU_ALLOW_PROJECTS` | 可选。用 `|` 隔开的绝对路径。设置了环境变量，或 `config.local.json` 里写了 `allowProjects` 数组，打开、新建、关闭就只发生在这些根目录里。两者都没写时，不在黑名单里的普通路径可用。空字符串或空数组是明确的收窄，不是「没配置」。已有的 `allowProjects` 会原样保留。 |
+| `XIANGSU_DENY_PROJECTS` | 黑名单，用 `|` 分隔，或写在未跟踪的 `config.local.json` 的 `denyProjects`。命中优先于默认允许和白名单，返回 `PROTECTED_PROJECT`。 |
 
 未设置根目录时，只在运行中的 `Douyin AR.exe` / `orionkit.exe`，以及 `%LOCALAPPDATA%\Douyin AR`、`Program Files\Douyin AR` 里查找。
 
@@ -90,7 +90,7 @@ node scripts\install.mjs
 从源码包安装：
 
 ```bat
-tar -xf xiangsu-mcp-plus-win-0.1.3.tgz
+tar -xf xiangsu-mcp-plus-win-0.1.4.tgz
 cd package
 npm install
 set XIANGSU_EDITOR_ROOT=D:\path\to\Douyin AR
@@ -101,7 +101,7 @@ node scripts\install.mjs
 
 `features.project` 在类直接导出（`Project.prototype.isProjectChanged`）或 9.8.3 命名空间（`Project.Project.prototype.isProjectChanged`）时可以为真；两条都没有、也没有已打开工程上的实例方法时仍为假。关闭还要求插件方法和官方 `project_status` 的 `is_changed` 都是 `false`，并且官方 `scene_dirty` 不是 `true`。这还不是编辑器验收，装完要重新打开可丢弃窗口后再看 `ext_status`。
 
-0.1.3 的插件 RPC 每次单独连接（`Connection: close`），避免复用一条已经被对端关掉的 keep-alive 连接。失败时工具文本是 `PLUGIN_RPC_FAILED(<方法>): fetch failed (<原因码>)`，不再只有 `fetch failed`。插件在 `project_launch` / `project_close` 开始和正常结束时写 `rpc start` / `rpc done`，抛错时仍写 `rpc error`。日志和错误里不包含 Bearer 令牌。这次机器上的 `fetch failed` 没有留下原因码，所以还不能断定连接复用就是那次失败的原因；下一次失败应能直接看到原因码，以及请求有没有进到插件。关闭、白名单和脏状态检查没有放宽。
+0.1.3 的插件 RPC 每次单独连接（`Connection: close`），避免复用一条已经被对端关掉的 keep-alive 连接。失败时工具文本是 `PLUGIN_RPC_FAILED(<方法>): fetch failed (<原因码>)`，不再只有 `fetch failed`。插件在 `project_launch` / `project_close` 开始和正常结束时写 `rpc start` / `rpc done`，抛错时仍写 `rpc error`。日志和错误里不包含 Bearer 令牌。这次机器上的 `fetch failed` 没有留下原因码，所以还不能断定连接复用就是那次失败的原因；下一次失败应能直接看到原因码，以及请求有没有进到插件。脏状态和窗口身份的拒绝没有放宽。未配置白名单时，普通路径可以操作。
 
 把 stdio 服务交给 MCP 客户端时，用本机的 `node` 运行 `src/server.mjs`，工作目录是本包根目录。服务启动时会再尝试安装；安装失败只记在 `ext_status.plugin_install`，官方转发仍然可以启动。
 
@@ -129,13 +129,13 @@ node scripts/rollback.mjs --plugin-root "%LOCALAPPDATA%\DouyinAR\Plugins\v9.8.3\
 下面的步骤**不是**本仓库已经完成的验收。合同测试全是模拟。真正点进 9.8.3 之前，先看 `ext_status`。
 
 1. 准备一个新建的空目录，名字类似 `_mcp_win_probe-<时间>`。不要用不能丢弃的工程，也不要把它放进那些工程里面。
-2. 把一次性目录和用来发起操作的那个已打开工程都放进 `XIANGSU_ALLOW_PROJECTS`。不在名单里的路径会被拒绝。不能碰的目录放进 `XIANGSU_DENY_PROJECTS`。不要把这些路径写进仓库。
+2. 不能碰的目录放进 `XIANGSU_DENY_PROJECTS` 或 `config.local.json` 的 `denyProjects`。没有配置白名单时，其他普通路径可以操作。若已经写了 `allowProjects` 或 `XIANGSU_ALLOW_PROJECTS`，就只在那些根目录里操作。不要把这些路径写进仓库。
 3. 安装插件后，手工打开一个可丢弃的工程窗口，让插件加载。像塑同时大约只能开两个工程窗口。
 4. 调用 `ext_status`。确认 `plugin_install.action` 不是 `failed`，官方 `connected` 为真，测试窗口的 `self_check.features.project` 为真。若为假，列出的 `missing` 就是当前编辑器缺少的内部模块，停在这里，不要继续开关窗口。
 5. 用官方 `list_instances` 只读核对测试窗口。官方工具由本服务转发，断线后不会自动再发。
 6. `project_close` 只关测试窗口。读不到工程路径、路径和官方实例不一致、或不能证明没有未保存修改时都会拒绝。关窗前会再读一次脏状态；这 300 毫秒里变成了脏且没有 `discard_changes`，进程不会退出。确认别的窗口还在。
 7. `project_open` 再打开测试工程目录（里面要有 `effect.dyehpj`）。已经打开时会原样返回。
-8. `project_new` 指到一个还不存在、且在白名单里的空目录。保存前会再确认目录仍是空的，并要求官方实例路径和插件里的临时工程路径一致、都不在黑名单里，而且用来新建的那个窗口还停在原来的工程上。对不上就不会调用 `save_project`。
+8. `project_new` 指到一个还不存在的空目录，且不在黑名单里。若配置了白名单，目录还必须落在其中。保存前会再确认目录仍是空的，并要求官方实例路径和插件里的临时工程路径一致、都不在黑名单里，而且用来新建的那个窗口还停在原来的工程上。对不上就不会调用 `save_project`。
 9. 关掉新建窗口，删掉临时目录。不要点提交审核，不要勾选协议。
 
 没有工程窗口时，`project_open` 应返回 `NO_EDITOR_WINDOW` 和 `WINDOWS_COLD_START_UNVERIFIED`，并且不会启动编辑器。
@@ -157,4 +157,4 @@ npm test
 npm run pack
 ```
 
-产物在 `release/xiangsu-mcp-plus-win-0.1.3.tgz`，旁边有 `.sha256`。解压后的包包含 `scripts/install.mjs`、`scripts/uninstall.mjs`、`scripts/rollback.mjs` 和 `src/server.mjs`。包里没有官方程序、素材或令牌。
+产物在 `release/xiangsu-mcp-plus-win-0.1.4.tgz`，旁边有 `.sha256`。解压后的包包含 `scripts/install.mjs`、`scripts/uninstall.mjs`、`scripts/rollback.mjs` 和 `src/server.mjs`。包里没有官方程序、素材或令牌。

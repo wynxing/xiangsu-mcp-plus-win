@@ -41,7 +41,7 @@ MCP 客户端 --stdio--> src/server.mjs
 - 关闭：`features.project` 承认两种导出。旧版 `Project` 就是类，方法在 `Project.prototype.isProjectChanged`。像塑 9.8.3 的 `Project` 是命名空间，类在 `Project.Project`，方法在 `Project.Project.prototype.isProjectChanged`。两条原型都没有、并且没有已打开工程实例上的 `isProjectChanged` 函数时，`features.project` 仍为假。没有活动工程、方法不是函数，或返回值不是布尔值，都是 `UNKNOWN_DIRTY_STATE`。`changed === true` 时拒绝，不再把 `discard_changes` 当成插件侧脏状态的放行条件。通过之后延迟 300 ms，再读一次插件状态，并再读一次官方 `project_status`。官方读失败、`is_changed` 不是 `false`、或 `scene_dirty === true`，都拒绝。`scene_dirty === false` 不能单独证明干净。官方路径、pid、generation 必须和插件窗口一致。只有插件 `isProjectChanged() === false` 且官方 `is_changed === false`（`scene_dirty` 也是布尔值且不是 `true`）才调用命名空间上的 `Project.unload()`，不改走 `Project.Project.unload()`。失败不会在 `catch` 里改走退出。没有 `taskkill`，没有重启编辑器。
 - 同一窗口上的打开、新建、关闭串行。不同窗口可以并行。窗口上限按 2 预检，最终仍以首页进程的 `WINDOW_LIMIT` 为准。
 - 多个窗口时必须给出 `project_path` 或 `instance_id`。路径比较在 Windows 上忽略大小写和斜杠，并做 NFC。
-- 生命周期变更使用白名单。`XIANGSU_ALLOW_PROJECTS` 或未跟踪的 `config.local.json`（`allowProjects`）列出允许的根目录；不在名单里的路径返回 `PROJECT_NOT_ALLOWLISTED`。`XIANGSU_DENY_PROJECTS` / `denyProjects` 优先，返回 `PROTECTED_PROJECT`。仓库不写具体工程名。
+- 生命周期变更默认允许普通路径。没有 `XIANGSU_ALLOW_PROJECTS`，且未跟踪的 `config.local.json` 没有 `allowProjects` 键时，不在黑名单里的路径可以打开、新建、关闭。环境变量或 `allowProjects` 数组一旦存在，就只允许那些根目录，空列表也是收窄。已有数组原样保留，不在升级时改写。`XIANGSU_DENY_PROJECTS` / `denyProjects` 优先，返回 `PROTECTED_PROJECT`。名单外的收窄返回 `PROJECT_NOT_ALLOWLISTED`。路径比较在 Windows 上忽略大小写和斜杠，并做 NFC。仓库不写具体工程名。
 - 关窗时插件路径必须能读到，并且和官方 `list_instances` 里同一 pid 的路径一致。读不到、对不上，或官方列表读失败，都不调用 `project_close`。
 - `project_new` 先在状态目录里用独占创建占用目标路径的锁文件，进程退出或锁文件里的 pid 已死才能接手；活着的 pid 不会被抢走。这个锁不在用户工程目录里，释放或替换过期锁不会删除目标目录。同一进程里还有一把内存锁。空目录检查在两把锁之内做，后一次紧挨着 `save_project`。
 

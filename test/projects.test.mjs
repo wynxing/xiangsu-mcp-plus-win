@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { Projects } from '../src/projects.mjs';
+import { Projects, projectPolicy } from '../src/projects.mjs';
 import { tmpdir } from '../support/tmp.mjs';
 
 function world({ paths } = {}) {
@@ -438,4 +438,59 @@ test('generation prefixes are pids and a second window is refused at the cap', a
   const instances = await projects.officialInstances();
   assert.deepEqual(instances.map((item) => item.pid), [11, 12]);
   await assert.rejects(projects.open({ path: projectDir() }), /WINDOW_LIMIT/);
+});
+
+function openPolicy() {
+  const { d, calls, windows } = world();
+  delete d.allow;
+  d.env = {};
+  d.localConfig = {};
+  return { d, calls, windows };
+}
+
+test('an ordinary project is usable when no allowlist is configured', async () => {
+  const { d, calls } = openPolicy();
+  const dir = projectDir();
+  const out = await new Projects(d).open({ path: dir });
+  assert.equal(out.pid, 200);
+  assert.equal(calls.some((call) => call[1] === 'project_launch'), true);
+});
+
+test('a deny list blocks a path that would otherwise be allowed', async () => {
+  const { d, calls } = openPolicy();
+  const dir = projectDir();
+  d.localConfig = { denyProjects: [dir] };
+  await assert.rejects(new Projects(d).open({ path: dir }), /PROTECTED_PROJECT/);
+  assert.equal(calls.some((call) => call[1] === 'project_launch'), false);
+  d.localConfig = { allowProjects: [path.dirname(dir)], denyProjects: [dir] };
+  await assert.rejects(new Projects(d).open({ path: dir }), /PROTECTED_PROJECT/);
+});
+
+test('an existing allowProjects list still narrows, and a missing key does not', () => {
+  const kept = projectPolicy({ env: {}, localConfig: { allowProjects: ['D:\\work'], denyProjects: ['D:\\work\\secret'] } });
+  assert.deepEqual(kept.allow, ['D:\\work']);
+  assert.deepEqual(kept.deny, ['D:\\work\\secret']);
+  const onlyDeny = projectPolicy({ env: {}, localConfig: { denyProjects: ['D:\\keep'] } });
+  assert.equal(onlyDeny.allow, null);
+  assert.deepEqual(onlyDeny.deny, ['D:\\keep']);
+  const unset = projectPolicy({ env: {}, localConfig: {} });
+  assert.equal(unset.allow, null);
+  assert.deepEqual(unset.deny, []);
+  const explicitEmpty = projectPolicy({ env: { XIANGSU_ALLOW_PROJECTS: '' }, localConfig: {} });
+  assert.deepEqual(explicitEmpty.allow, []);
+  assert.throws(() => projectPolicy({ env: {}, localConfig: { allowProjects: 'D:\\work' } }), /CONFIG_INVALID/);
+});
+
+test('windows path matching still applies to the optional allowlist and the deny list', () => {
+  const projects = new Projects({ platform: 'win32', env: {}, localConfig: { denyProjects: ['D:\\Keep'] }, realpathSync: (p) => p });
+  assert.equal(projects.assertMutable('d:/other/project'), 'd:\\other\\project');
+  assert.throws(() => projects.assertMutable('D:/keep/child'), /PROTECTED_PROJECT/);
+  const narrowed = new Projects({
+    platform: 'win32',
+    env: {},
+    localConfig: { allowProjects: ['D:\\Work'] },
+    realpathSync: (p) => p,
+  });
+  assert.equal(narrowed.assertMutable('d:/work/project'), 'd:\\work\\project');
+  assert.throws(() => narrowed.assertMutable('D:\\elsewhere'), /PROJECT_NOT_ALLOWLISTED/);
 });

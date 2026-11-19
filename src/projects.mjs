@@ -54,14 +54,24 @@ function loadLocalConfig(file = fileURLToPath(new URL('../config.local.json', im
   }
 }
 
+function rootList(value, label) {
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value)) throw Error(`CONFIG_INVALID: ${label} must be an array`);
+  return value.map((item) => String(item).trim()).filter(Boolean);
+}
+
 export function projectPolicy(d = {}) {
-  if (d.allow || d.deny) return { allow: d.allow ?? [], deny: d.deny ?? [] };
+  if (d.allow !== undefined || d.deny !== undefined) {
+    return { allow: d.allow === undefined ? null : d.allow, deny: d.deny ?? [] };
+  }
   const env = d.env ?? process.env;
   const file = d.localConfig ?? loadLocalConfig();
-  return {
-    allow: [...splitList(env.XIANGSU_ALLOW_PROJECTS), ...(file.allowProjects ?? [])],
-    deny: [...splitList(env.XIANGSU_DENY_PROJECTS), ...(file.denyProjects ?? [])],
-  };
+  const envAllow = Object.prototype.hasOwnProperty.call(env, 'XIANGSU_ALLOW_PROJECTS') ? splitList(env.XIANGSU_ALLOW_PROJECTS) : null;
+  const fileAllow = rootList(file.allowProjects, 'allowProjects');
+  const allow = envAllow === null && fileAllow === null ? null : [...(envAllow ?? []), ...(fileAllow ?? [])];
+  const fileDeny = rootList(file.denyProjects, 'denyProjects');
+  const deny = [...splitList(env.XIANGSU_DENY_PROJECTS), ...(fileDeny ?? [])];
+  return { allow, deny };
 }
 
 export class Projects {
@@ -90,6 +100,7 @@ export class Projects {
     for (const denied of deny) {
       if (pathInside(abs, denied, { platform: this.platform, realpathSync: this.d.realpathSync })) throw Error(`PROTECTED_PROJECT: ${abs}`);
     }
+    if (allow === null) return abs;
     const listed = allow.some((root) => pathInside(abs, root, { platform: this.platform, realpathSync: this.d.realpathSync }));
     if (!listed) throw Error(`PROJECT_NOT_ALLOWLISTED: ${abs}`);
     return abs;
