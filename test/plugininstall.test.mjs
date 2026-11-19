@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
+import { pathToFileURL } from 'node:url';
 import { fileURLToPath } from 'node:url';
 import { ensurePlugin, removePlugin, rollbackPlugin } from '../src/plugininstall.mjs';
 import { tmpdir } from '../support/tmp.mjs';
@@ -36,13 +37,17 @@ const listed = (root) => JSON.parse(fs.readFileSync(path.join(root, 'plugins.con
 const entryCode = (root, version) => fs.readFileSync(path.join(root, `XiangsuMcpPlus@${version}`, 'index.js'), 'utf8');
 const embeddedPath = (p) => JSON.stringify(p).slice(1, -1);
 
-test('a fresh install keeps other plugins and points at the package by absolute path', () => {
+test('a fresh install keeps other plugins and points the entry at the state copy', () => {
   const pluginRoot = pluginRootWithOthers();
+  const stateRoot = tmpdir('xs-st-');
   const pkgRoot = fakePackage('1.2.0');
-  const res = ensurePlugin({ pluginRoot, pkgRoot, stateRoot: tmpdir('xs-st-') });
+  const res = ensurePlugin({ pluginRoot, pkgRoot, stateRoot });
   assert.equal(res.action, 'installed');
   assert.deepEqual(listed(pluginRoot).map((p) => p.name), ['Other', 'CodexXiangsuMCP', 'XiangsuMcpPlus']);
-  assert.ok(entryCode(pluginRoot, '1.2.0').includes(JSON.stringify(path.join(pkgRoot, 'editor-plugin', 'runtime.cjs'))));
+  assert.equal(res.code, path.join(stateRoot, 'editor-plugin', '1.2.0', res.build));
+  assert.ok(entryCode(pluginRoot, '1.2.0').includes(JSON.stringify(path.join(res.code, 'runtime.cjs'))));
+  assert.equal(JSON.parse(fs.readFileSync(path.join(pluginRoot, 'XiangsuMcpPlus@1.2.0', 'package.json'), 'utf8')).type, 'commonjs');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(pluginRoot, 'XiangsuMcpPlus@1.2.0', 'plugin.manifest.json'), 'utf8')).entry, 'index.js');
   assert.ok(entryCode(pluginRoot, '1.2.0').includes("--projectType=project"));
   assert.equal(fs.readdirSync(pluginRoot).filter((name) => name.startsWith('plugins.config.json.bak-')).length, 1);
   const backupDir = fs.readdirSync(path.join(res.backup.dir, '..'));
@@ -56,11 +61,13 @@ test('the same or a newer install is kept, an older one is replaced, and force r
   ensurePlugin({ pluginRoot, pkgRoot: newer, stateRoot });
   assert.equal(ensurePlugin({ pluginRoot, pkgRoot: fakePackage('1.9.0'), stateRoot }).action, 'kept');
   const newest = fakePackage('2.0.0');
-  assert.equal(ensurePlugin({ pluginRoot, pkgRoot: newest, stateRoot }).action, 'installed');
-  assert.ok(entryCode(pluginRoot, '2.0.0').includes(embeddedPath(newest)));
+  const upgraded = ensurePlugin({ pluginRoot, pkgRoot: newest, stateRoot });
+  assert.equal(upgraded.action, 'installed');
+  assert.ok(entryCode(pluginRoot, '2.0.0').includes(embeddedPath(path.join(upgraded.code, 'runtime.cjs'))));
   const older = fakePackage('1.0.0');
-  assert.equal(ensurePlugin({ pluginRoot, pkgRoot: older, stateRoot, force: true }).action, 'installed');
-  assert.ok(entryCode(pluginRoot, '1.0.0').includes(embeddedPath(older)));
+  const forced = ensurePlugin({ pluginRoot, pkgRoot: older, stateRoot, force: true });
+  assert.equal(forced.action, 'installed');
+  assert.ok(entryCode(pluginRoot, '1.0.0').includes(embeddedPath(path.join(forced.code, 'runtime.cjs'))));
   assert.deepEqual(listed(pluginRoot).filter((p) => p.name === 'XiangsuMcpPlus'), [{ name: 'XiangsuMcpPlus', version: '1.0.0', loadOnStartup: true }]);
 });
 
@@ -94,7 +101,7 @@ test('a package run from the npx cache is copied out before the cache disappears
   fs.mkdirSync(cache, { recursive: true });
   const pkgRoot = fakePackage('1.2.0', cache);
   const res = ensurePlugin({ pluginRoot, pkgRoot, stateRoot });
-  const copy = path.join(stateRoot, 'editor-plugin', '1.2.0', 'editor-plugin');
+  const copy = path.join(stateRoot, 'editor-plugin', '1.2.0', res.build);
   assert.equal(res.code, copy);
   fs.rmSync(pkgRoot, { recursive: true, force: true });
   assert.deepEqual(require(path.join(copy, 'runtime.cjs')), { version: '1.2.0' });
@@ -130,12 +137,12 @@ test('replacing a plugin keeps a restorable copy of the old directory', () => {
   const pluginRoot = pluginRootWithOthers();
   const stateRoot = tmpdir('xs-st-');
   const oldPkg = fakePackage('1.0.0');
-  ensurePlugin({ pluginRoot, pkgRoot: oldPkg, stateRoot });
+  const first = ensurePlugin({ pluginRoot, pkgRoot: oldPkg, stateRoot });
   const upgraded = ensurePlugin({ pluginRoot, pkgRoot: fakePackage('2.0.0'), stateRoot });
   assert.equal(upgraded.action, 'installed');
   assert.ok(upgraded.directory_backups.length >= 1);
   const copied = fs.readFileSync(path.join(upgraded.directory_backups[0], 'index.js'), 'utf8');
-  assert.ok(copied.includes(embeddedPath(oldPkg)));
+  assert.ok(copied.includes(embeddedPath(path.join(first.code, 'runtime.cjs'))));
   assert.ok(fs.existsSync(path.join(pluginRoot, 'XiangsuMcpPlus@2.0.0', 'index.js')));
 });
 
@@ -144,6 +151,7 @@ test('rollback restores the previous plugin directory and config without droppin
   const stateRoot = tmpdir('xs-st-');
   const oldPkg = fakePackage('1.0.0');
   ensurePlugin({ pluginRoot, pkgRoot: oldPkg, stateRoot });
+  const oldIndex = fs.readFileSync(path.join(pluginRoot, 'XiangsuMcpPlus@1.0.0', 'index.js'), 'utf8');
   const upgraded = ensurePlugin({ pluginRoot, pkgRoot: fakePackage('2.0.0'), stateRoot });
   const otherFile = path.join(pluginRoot, 'Other@1.0.0', 'keep.txt');
   fs.mkdirSync(path.dirname(otherFile), { recursive: true });
@@ -152,7 +160,7 @@ test('rollback restores the previous plugin directory and config without droppin
   assert.equal(result.action, 'rolled-back');
   assert.ok(fs.existsSync(path.join(pluginRoot, 'XiangsuMcpPlus@1.0.0', 'index.js')));
   assert.equal(fs.existsSync(path.join(pluginRoot, 'XiangsuMcpPlus@2.0.0')), false);
-  assert.ok(fs.readFileSync(path.join(pluginRoot, 'XiangsuMcpPlus@1.0.0', 'index.js'), 'utf8').includes(embeddedPath(oldPkg)));
+  assert.equal(fs.readFileSync(path.join(pluginRoot, 'XiangsuMcpPlus@1.0.0', 'index.js'), 'utf8'), oldIndex);
   assert.deepEqual(listed(pluginRoot).map((p) => p.name), ['Other', 'CodexXiangsuMCP', 'XiangsuMcpPlus']);
   assert.equal(listed(pluginRoot).find((p) => p.name === 'XiangsuMcpPlus').version, '1.0.0');
   assert.equal(fs.readFileSync(otherFile, 'utf8'), 'other');
@@ -168,18 +176,82 @@ test('dry-run does not write the plugin', () => {
   assert.deepEqual(fs.readdirSync(pluginRoot).sort(), before);
 });
 
-test('the generated entry loads the real runtime without starting it', () => {
-  const pluginRoot = tmpdir('xs-real-');
-  ensurePlugin({ pluginRoot, pkgRoot: repo, stateRoot: tmpdir('xs-st-') });
+test('a same-version install without the commonjs boundary is replaced', () => {
+  const pluginRoot = pluginRootWithOthers();
+  const stateRoot = tmpdir('xs-st-');
+  const pkgRoot = fakePackage('1.2.0');
+  ensurePlugin({ pluginRoot, pkgRoot, stateRoot });
+  const folder = path.join(pluginRoot, 'XiangsuMcpPlus@1.2.0');
+  fs.rmSync(path.join(folder, 'package.json'));
+  const markerPath = path.join(folder, 'install.json');
+  const marker = JSON.parse(fs.readFileSync(markerPath, 'utf8'));
+  delete marker.build;
+  fs.writeFileSync(markerPath, JSON.stringify(marker));
+  const again = ensurePlugin({ pluginRoot, pkgRoot, stateRoot });
+  assert.equal(again.action, 'installed');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(folder, 'package.json'), 'utf8')).type, 'commonjs');
+  assert.equal(ensurePlugin({ pluginRoot, pkgRoot, stateRoot }).action, 'kept');
+});
+
+test('the same version with different runtime bytes is installed again', () => {
+  const pluginRoot = pluginRootWithOthers();
+  const stateRoot = tmpdir('xs-st-');
+  const first = ensurePlugin({ pluginRoot, pkgRoot: fakePackage('1.2.0'), stateRoot });
+  const changed = fakePackage('1.2.0');
+  fs.writeFileSync(path.join(changed, 'editor-plugin', 'runtime.cjs'), 'module.exports = { version: "1.2.0-fixed" };\n');
+  const second = ensurePlugin({ pluginRoot, pkgRoot: changed, stateRoot });
+  assert.equal(second.action, 'installed');
+  assert.notEqual(second.build, first.build);
+  assert.equal(fs.readFileSync(path.join(second.code, 'runtime.cjs'), 'utf8').includes('1.2.0-fixed'), true);
+});
+
+test('an index.js under an ancestor type module throws until the generated boundary is present', async () => {
+  const home = tmpdir('xs-home-');
+  fs.writeFileSync(path.join(home, 'package.json'), JSON.stringify({ type: 'module' }));
+  const broken = path.join(home, 'Local', 'XiangsuMcpPlus@0.1.0');
+  fs.mkdirSync(broken, { recursive: true });
+  const runtime = path.join(home, 'runtime.cjs');
+  fs.writeFileSync(runtime, 'module.exports = { Runtime: class {}, log() {} };\n');
+  fs.writeFileSync(path.join(broken, 'index.js'), `'use strict';\nconst { Runtime, log } = require(${JSON.stringify(runtime)});\nmodule.exports = class { initPlugin() { this.runtime = new Runtime(); } };\n`);
+  await assert.rejects(() => import(pathToFileURL(path.join(broken, 'index.js')).href), /require is not defined in ES module scope/);
+
+  const pluginRoot = path.join(home, 'AppData', 'Local', 'DouyinAR', 'Plugins', 'v9.8.3', 'Local');
+  fs.mkdirSync(pluginRoot, { recursive: true });
+  const installed = ensurePlugin({ pluginRoot, pkgRoot: fakePackage('1.2.0'), stateRoot: tmpdir('xs-st-') });
+  const entry = path.join(pluginRoot, 'XiangsuMcpPlus@1.2.0', 'index.js');
+  const imported = await import(pathToFileURL(entry).href);
+  const required = createRequire(path.join(home, 'package.json'))(entry);
+  assert.equal(typeof imported.default, 'function');
+  assert.equal(required, imported.default);
+  const plugin = new imported.default();
+  plugin.initPlugin();
+  assert.equal(plugin.runtime, undefined);
+  assert.equal(installed.requires_window_reopen, true);
+});
+
+test('the generated entry loads the real runtime without starting it', async () => {
   const version = JSON.parse(fs.readFileSync(path.join(repo, 'package.json'), 'utf8')).version;
-  const Plugin = require(path.join(pluginRoot, `XiangsuMcpPlus@${version}`, 'index.js'));
-  const plugin = new Plugin();
-  const argv = process.argv;
-  process.argv = argv.filter((arg) => arg !== '--projectType=project');
-  try {
-    plugin.initPlugin();
-    assert.equal(plugin.runtime, undefined);
-  } finally {
-    process.argv = argv;
+  for (const type of ['module', 'commonjs', null]) {
+    const home = tmpdir('xs-home-');
+    if (type) fs.writeFileSync(path.join(home, 'package.json'), JSON.stringify({ type }));
+    const pluginRoot = path.join(home, 'AppData', 'Local', 'DouyinAR', 'Plugins', 'v9.8.3', 'Local');
+    fs.mkdirSync(pluginRoot, { recursive: true });
+    ensurePlugin({ pluginRoot, pkgRoot: repo, stateRoot: tmpdir('xs-st-') });
+    const dir = path.join(pluginRoot, `XiangsuMcpPlus@${version}`);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).type, 'commonjs');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'plugin.manifest.json'), 'utf8')).entry, 'index.js');
+    const entry = path.join(dir, 'index.js');
+    const imported = await import(pathToFileURL(entry).href);
+    const required = createRequire(path.join(home, 'from.cjs'))(entry);
+    assert.equal(imported.default, required);
+    const plugin = new imported.default();
+    const argv = process.argv;
+    process.argv = argv.filter((arg) => arg !== '--projectType=project');
+    try {
+      plugin.initPlugin();
+      assert.equal(plugin.runtime, undefined);
+    } finally {
+      process.argv = argv;
+    }
   }
 });

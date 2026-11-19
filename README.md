@@ -68,13 +68,36 @@ node scripts/install.mjs --dry-run
 1. 先把现有 `plugins.config.json` 和将要换掉的 `XiangsuMcpPlus` / `XiangsuMcpExt` 目录复制到 `install-backups`。配置文件旁边也会留一份 `plugins.config.json.bak-<时间>`。
 2. 新插件先写到临时目录并核对 `index.js`、清单和标记都在，再替换旧目录。写入失败时旧目录还在。
 3. 其他插件原样保留。
-4. 生成的 `index.js` 用绝对路径加载 `runtime.cjs`，避免 npx 缓存目录变化后插件找不到代码。
+4. 生成的 `index.js` 仍是清单里的 `entry`。同目录有一份只写 `"type": "commonjs"` 的 `package.json`。Node 用离文件最近的 `package.json` 判断 `.js` 是 CommonJS 还是 ES 模块。用户主目录若是 `"type": "module"`，而插件目录没有自己的 `package.json`，`index.js` 里的 `require` 会在加载时失败。不要改主目录的 `package.json`，也不要把入口改成尚未在编辑器里核对过的 `.cjs`。
+5. `editor-plugin` 会复制到状态目录 `editor-plugin/<版本>/<构建号>/`。入口用绝对路径加载那里的 `runtime.cjs`，解压目录或 npx 缓存删掉之后仍然找得到。
 
 令牌文件在 Windows 上会换成只含当前用户的 DACL，并读回来核对。核对失败就删掉令牌文件并停止监听。POSIX 上目录是 `0700`，文件是 `0600`。
 
-同一版本且代码还在时，再次安装结果是 `kept`。`--force` 会重装。
+同一版本只有在构建号一致、这份 CommonJS 边界还在、并且状态目录里的 `runtime.cjs` 还在时，再次安装才是 `kept`。0.1.0 没有边界文件，也没有构建号，安装 0.1.1 会替换它，不会把坏的 0.1.0 留在原地。`--force` 仍会重装。
 
-插件只在带 `--projectType=project` 的工程窗口里启动。装完之后要新开一个工程窗口，已经开着的窗口不会自动加载。
+插件只在带 `--projectType=project` 的工程窗口里启动。已经开着的窗口不会重新加载。装完 0.1.1 之后，关掉可丢弃的工程窗口再打开一次。
+
+从已经装过 0.1.0 的机器升级时，不要改 `%USERPROFILE%\package.json`，也不要改像塑程序目录：
+
+```bat
+set XIANGSU_EDITOR_ROOT=D:\path\to\Douyin AR
+node scripts\install.mjs --dry-run
+node scripts\install.mjs
+```
+
+需要替换时，`--dry-run` 的 `action` 是 `dry-run`，`version` 是 `0.1.1`，`requires_window_reopen` 为真。若 `action` 已是 `kept` 且 `version` 仍是 `0.1.0`，跑到的还是旧包。
+
+从源码包安装：
+
+```bat
+tar -xf xiangsu-mcp-plus-win-0.1.1.tgz
+cd package
+npm install
+set XIANGSU_EDITOR_ROOT=D:\path\to\Douyin AR
+node scripts\install.mjs
+```
+
+插件目录是 `%LOCALAPPDATA%\DouyinAR\Plugins\v9.8.3\Local\XiangsuMcpPlus@0.1.1`。运行时代码在 `%USERPROFILE%\.xiangsu-mcp-plus-win\editor-plugin\0.1.1\<构建号>\`。这次安装打印的 `backup.dir` 可以回滚到升级前；回滚回去的 0.1.0 在主目录 `"type": "module"` 下仍然加载失败。
 
 把 stdio 服务交给 MCP 客户端时，用本机的 `node` 运行 `src/server.mjs`，工作目录是本包根目录。服务启动时会再尝试安装；安装失败只记在 `ext_status.plugin_install`，官方转发仍然可以启动。
 
@@ -130,4 +153,4 @@ npm test
 npm run pack
 ```
 
-产物在 `release/xiangsu-mcp-plus-win-0.1.0.tgz`，旁边有 `.sha256`。解压后的包包含 `scripts/install.mjs`、`scripts/uninstall.mjs`、`scripts/rollback.mjs` 和 `src/server.mjs`。包里没有官方程序、素材或令牌。
+产物在 `release/xiangsu-mcp-plus-win-0.1.1.tgz`，旁边有 `.sha256`。解压后的包包含 `scripts/install.mjs`、`scripts/uninstall.mjs`、`scripts/rollback.mjs` 和 `src/server.mjs`。包里没有官方程序、素材或令牌。

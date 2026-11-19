@@ -63,6 +63,10 @@ MCP 客户端 --stdio--> src/server.mjs
 
 安装：先把将要替换的插件目录整份复制到 `install-backups`，新目录在临时名称下写完并核对之后才替换。写到一半失败时，原来的 `index.js` 还在。服务启动时的自动安装走同一条路径。
 
+生成的插件目录保持清单 `"entry": "index.js"`，并写入只含 `"type": "commonjs"` 的 `package.json`。这是离入口最近的包边界。像塑 9.8.3 的一次加载日志里，`index.js` 被 Node 当成 ES 模块执行，因为从插件目录向上找到了用户主目录的 `"type": "module"`，于是 `require` 抛出 `require is not defined in ES module scope`。`.cjs` 入口在 Node 里也能强制 CommonJS，但编辑器这次实际打开的是清单里的 `index.js`，所以不改入口文件名。`editor-plugin` 复制到状态目录 `editor-plugin/<版本>/<构建号>/`，入口用绝对路径引用那份 `runtime.cjs`。
+
+同一 `version` 且 `install.json` 的 `build` 与当前包一致、边界文件还在、状态目录里的 `runtime.cjs` 还在，才返回 `kept`。已安装版本更高时不降级。0.1.0 没有 `build`，也没有边界文件，0.1.1 会替换它。替换后需要重新打开工程窗口，已经开着的窗口不会加载新入口。
+
 ## 已测与未测
 
 已在本仓库用 `npm test`（`node --test`）测过，CI 矩阵是 Ubuntu 与 Windows、Node 22 与 24：
@@ -81,7 +85,7 @@ MCP 客户端 --stdio--> src/server.mjs
 
 未测，不能写成编辑器验收：
 
-- 像塑 9.8.3 是否真的加载这个插件
+- 像塑 9.8.3 是否会加载带 CommonJS 边界的 `index.js`。Node 已复现祖先 `"type": "module"` 下裸 `index.js` 的 `ReferenceError`，以及边界文件让 `import()` 和 `require()` 都得到插件类。这还不是编辑器验收。
 - `OpenProjectFromEditCommand`、`Project.unload` 在 Windows 9.8.3 上是否还是这些模块路径
 - 官方 `17320` 的实时工具列表和 `generation` 字段
 - 无窗口启动编辑器的安全命令

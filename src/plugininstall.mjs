@@ -1,9 +1,12 @@
 // Installs the XiangsuMcpPlus editor plugin into 像塑's per-version Local plugin folder.
-// index.js requires editor-plugin/runtime.cjs by absolute path. A package executed from
-// npx's cache is copied into the state directory first, because that cache can disappear.
+// index.js requires editor-plugin/runtime.cjs by absolute path. The runtime is copied into
+// the state directory so the entry does not depend on an extracted tarball or an npx cache.
+// The plugin folder also gets {"type":"commonjs"}. Node classifies index.js from the nearest
+// package.json, and a home directory "type":"module" would otherwise make require throw.
 //
 // Adapted from Muqian-Sun/xiangsu-mcp-plus src/plugininstall.mjs (MIT, Copyright (c) 2026 muqian).
 // Windows plugin root: %LOCALAPPDATA%\DouyinAR\Plugins\v<short>\Local.
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,6 +16,7 @@ import { discoverEditor } from './editor.mjs';
 export const PLUGIN_NAME = 'XiangsuMcpPlus';
 const LEGACY_NAMES = new Set([PLUGIN_NAME, 'XiangsuMcpExt']);
 const MARKER = 'install.json';
+const ENTRY_FORMAT = 'cjs-package-boundary-1';
 const PKG_ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 export function stateRootOf(env = process.env) {
@@ -44,26 +48,16 @@ function installed(pluginRoot) {
   if (!fs.existsSync(listPath)) return null;
   const listed = (readJson(listPath).plugins || []).find((p) => p.name === PLUGIN_NAME);
   if (!listed) return null;
-  const marker = path.join(pluginRoot, `${PLUGIN_NAME}@${listed.version}`, MARKER);
+  const folder = path.join(pluginRoot, `${PLUGIN_NAME}@${listed.version}`);
+  const marker = path.join(folder, MARKER);
   if (!fs.existsSync(marker)) return null;
   const record = readJson(marker);
-  if (!fs.existsSync(path.join(record.code, 'runtime.cjs'))) return null;
-  return record;
+  if (!record.code || !fs.existsSync(path.join(record.code, 'runtime.cjs'))) return null;
+  return { ...record, folder };
 }
 
-function stableCode(pkgRoot, version, stateRoot) {
-  const src = path.join(pkgRoot, 'editor-plugin');
-  if (!pkgRoot.split(path.sep).includes('_npx')) return src;
-  const dest = path.join(stateRoot, 'editor-plugin', version, 'editor-plugin');
-  if (!fs.existsSync(path.join(dest, 'runtime.cjs'))) {
-    const tmp = `${dest}.tmp-${process.pid}`;
-    fs.rmSync(tmp, { recursive: true, force: true });
-    fs.mkdirSync(path.dirname(dest), { recursive: true });
-    fs.cpSync(src, tmp, { recursive: true });
-    fs.rmSync(dest, { recursive: true, force: true });
-    fs.renameSync(tmp, dest);
-  }
-  return dest;
+function boundarySource() {
+  return `${JSON.stringify({ type: 'commonjs' }, null, 2)}\n`;
 }
 
 function entrySource(runtimeFile) {
@@ -78,6 +72,58 @@ module.exports = class {
   deinitPlugin() { this.runtime && this.runtime.stop(); }
 };
 `;
+}
+
+function pluginBuild(pkgRoot) {
+  const hash = crypto.createHash('sha256');
+  hash.update(ENTRY_FORMAT);
+  hash.update('\0');
+  hash.update(entrySource('__RUNTIME__'));
+  hash.update('\0');
+  hash.update(boundarySource());
+  const dir = path.join(pkgRoot, 'editor-plugin');
+  const files = [];
+  const walk = (current) => {
+    for (const name of fs.readdirSync(current).sort()) {
+      const full = path.join(current, name);
+      if (fs.statSync(full).isDirectory()) walk(full);
+      else files.push(path.relative(dir, full).split(path.sep).join('/'));
+    }
+  };
+  walk(dir);
+  for (const rel of files) {
+    hash.update(rel);
+    hash.update('\0');
+    hash.update(fs.readFileSync(path.join(dir, ...rel.split('/'))));
+    hash.update('\0');
+  }
+  return hash.digest('hex').slice(0, 16);
+}
+
+function boundaryOk(folder) {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(folder, 'package.json'), 'utf8'));
+    const manifest = JSON.parse(fs.readFileSync(path.join(folder, 'plugin.manifest.json'), 'utf8'));
+    return pkg.type === 'commonjs' && manifest.entry === 'index.js' && fs.existsSync(path.join(folder, 'index.js'));
+  } catch {
+    return false;
+  }
+}
+
+function stableCode(pkgRoot, version, build, stateRoot) {
+  const src = path.join(pkgRoot, 'editor-plugin');
+  const dest = path.join(stateRoot, 'editor-plugin', version, build);
+  if (path.resolve(src) === path.resolve(dest)) return dest;
+  if (!fs.existsSync(path.join(dest, 'runtime.cjs'))) {
+    const tmp = `${dest}.tmp-${process.pid}`;
+    fs.rmSync(tmp, { recursive: true, force: true });
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.cpSync(src, tmp, { recursive: true });
+    if (!fs.existsSync(path.join(tmp, 'runtime.cjs'))) throw Error('INSTALL_RUNTIME_MISSING');
+    fs.rmSync(dest, { recursive: true, force: true });
+    fs.renameSync(tmp, dest);
+  }
+  return dest;
 }
 
 function backupConfig(listPath, stateRoot, raw, stamp) {
@@ -114,12 +160,15 @@ export function ensurePlugin({
   const pkg = readJson(path.join(pkgRoot, 'package.json'));
   const version = pkg.version;
   const folderVersion = manifestVersion || version;
+  const build = pluginBuild(pkgRoot);
   fs.mkdirSync(pluginRoot, { recursive: true });
   const current = installed(pluginRoot);
-  if (!force && current && compareVersions(current.version, version) >= 0) {
-    return { action: 'kept', plugin_root: pluginRoot, version: current.version, code: current.code, editor: editor || null, requires_window_reopen: false };
+  const samePayload = current && compareVersions(current.version, version) === 0 && current.build === build && boundaryOk(current.folder);
+  const newer = current && compareVersions(current.version, version) > 0;
+  if (!force && (samePayload || newer)) {
+    return { action: 'kept', plugin_root: pluginRoot, version: current.version, build: current.build || null, code: current.code, editor: editor || null, requires_window_reopen: false };
   }
-  const code = stableCode(pkgRoot, version, stateRoot);
+  const code = stableCode(pkgRoot, version, build, stateRoot);
   const runtimeFile = path.join(code, 'runtime.cjs');
   const removed = ownFolders(pluginRoot);
   const listPath = path.join(pluginRoot, 'plugins.config.json');
@@ -140,6 +189,7 @@ export function ensurePlugin({
     action: 'installed',
     plugin_root: pluginRoot,
     version,
+    build,
     code,
     plugin: path.join(pluginRoot, `${PLUGIN_NAME}@${folderVersion}`),
     removed,
@@ -169,6 +219,7 @@ export function ensurePlugin({
     fs.mkdirSync(staging, { recursive: true });
     const files = {
       'index.js': entrySource(runtimeFile),
+      'package.json': boundarySource(),
       'plugin.manifest.json': JSON.stringify(
         {
           name: PLUGIN_NAME,
@@ -181,13 +232,16 @@ export function ensurePlugin({
         null,
         2,
       ),
-      [MARKER]: JSON.stringify({ package: pkg.name, version, code }, null, 2),
+      [MARKER]: JSON.stringify({ package: pkg.name, version, build, code, entryFormat: ENTRY_FORMAT }, null, 2),
     };
     for (const [name, contents] of Object.entries(files)) writeFileSync(path.join(staging, name), contents);
     for (const name of Object.keys(files)) {
       if (!fs.existsSync(path.join(staging, name))) throw Error(`INSTALL_STAGE_INCOMPLETE: ${name}`);
     }
     if (!fs.readFileSync(path.join(staging, 'index.js'), 'utf8').includes(JSON.stringify(runtimeFile))) throw Error('INSTALL_STAGE_INCOMPLETE: index');
+    const stagedBoundary = JSON.parse(fs.readFileSync(path.join(staging, 'package.json'), 'utf8'));
+    const stagedManifest = JSON.parse(fs.readFileSync(path.join(staging, 'plugin.manifest.json'), 'utf8'));
+    if (stagedBoundary.type !== 'commonjs' || stagedManifest.entry !== 'index.js') throw Error('INSTALL_STAGE_INCOMPLETE: boundary');
     const next = {
       ...list,
       plugins: (list.plugins || []).filter((p) => !LEGACY_NAMES.has(p.name)).concat([{ name: PLUGIN_NAME, version: folderVersion, loadOnStartup: true }]),
