@@ -87,6 +87,7 @@ MCP 客户端 --stdio--> src/server.mjs
 - 脏状态、未知脏状态不调用 `project_close`；两个窗口必须点名；同一窗口串行
 - 官方 `save_project` 断线后 `callTool` 次数为 1
 - 图标图：png / jpeg / gif / webp 中心裁成正方形再缩成 360×360 PNG；源文件字节不变；坏图、空文件、相对路径不留临时文件
+- 图标工具：点名窗口后才调用插件；`features.icon` 为假时不写文件且 `features.project` 仍可为真；上传不是 `true` 或调用失败时不自动再传
 
 未测，不能写成编辑器验收：
 
@@ -95,21 +96,29 @@ MCP 客户端 --stdio--> src/server.mjs
 - 官方 `17320` 的实时工具列表和 `generation` 字段
 - 无窗口启动编辑器的安全命令
 - Orion 最小化 / 不抢焦点
-- 曲库绑定和图标上传
+- 曲库绑定和图标上传在像塑窗口里的读回
 
-## 图标图（本地，未接上传）
+## 图标图（本地）与图标工具（合同测试，编辑器未验收）
 
 上游 `src/icons.mjs`（提交 `05d83470`）用 macOS `sips`：`--cropToHeightWidth` 取较短边的正方形，再 `-z 360 360` 写成新的 PNG。Windows 没有 `sips`。`src/icon-image.mjs` 的 `prepareIcon` 做同一件事，实现是 `sharp` 0.34.5（libvips 预编译包，锁在 `package-lock.json`，`npm ci` 按平台安装，包含 `sharp-win32-x64`）。
 
 - 路径必须是绝对路径。读文件用 Node 的 `fs`，不经过 shell，所以中文和 NFC 路径按系统文件名处理。
 - 格式看文件头，不看扩展名：png、jpeg、gif、webp。空文件、目录、截断的图、认不出的头都拒绝。
 - 先按 EXIF 方向转正（方向 5–8 会交换宽高），再裁正方形。不补边。已经是正方形的只缩放。比 360 小的会放大。动图只取第一帧。
-- 输出是临时目录里的新文件 `xs-icon-*/icon.png`，`wx` 创建。源路径不打开来写。失败时删掉这个临时目录。
+- 输出是临时目录里的新文件 `xs-icon-*/icon.png`，`wx` 创建。源路径不打开来写。失败时删掉这个临时目录。调用结束后临时目录会删掉。
 - 源文件大于 40MB，或任一边大于 8192，拒绝。
-- 这不是上传。`features.icon` 仍只出现在诊断里；缺内部模块不会让工程开关失败。
+
+`icon_set` / `icon_open` 的编辑器调用顺序来自上游 `editor-plugin/features/delivery.cjs` 的 `iconSet` / `iconOpen`，自检列表来自同一提交的 `REQUIRED.icon`。图标路径用编辑器模块给出的 `iconTypeToProjectIconPathMap`，不在这里写死文件名。
+
+- 先点名一个窗口：插件路径、`project_state` 和官方 `list_instances` 里同一个 pid 必须一致，并且路径在当前允许名单里。对不上就不调用插件。
+- 插件先做 `ensureCompatible('icon')`，再核对活动工程就是这个路径（`ProjectManager.getInstance().getActiveProject`，与上游一致）。缺任何一项都是 `INCOMPATIBLE_EDITOR`，不写文件。这不会把 `features.project` 判失败。
+- 写入后立刻对照准备好的 PNG 字节。不一致则不上传。上传只调用一次。返回值不是布尔 `true`，或调用抛错、断线、超时，都失败并且不自动再传。
+- 成功返回里带 `project_icons` 和 `readback`（路径还在）。合同测试用假的编辑器模块。这不是像塑 9.8.3 的读回。
+- `icon_open` 调用 `showIconCreationWindow('tool_bar')`。不最小化，不读窗口列表，所以 `window_readback` 是假，`minimized` 是 `null`。
+- 不勾协议，不点提交审核，不发布，不调用付费生成。
 
 ## 下一阶段（本刀不做）
 
 1. 曲库：`music_categories`、`music_list`、`music_search`、`music_apply`。先看测试窗口里 `features.music`。模块路径与上游 `REQUIRED.music` 相同。
-2. 图标上传：本地 360×360 制作已在 `src/icon-image.mjs`（见上）。`icon_set` / `icon_open` 仍未注册。上传仍依赖 `REQUIRED.icon` 自检，而且要能读回目标窗口里的结果。
+2. 图标工具的像塑 9.8.3 读回仍未做。本地制作和合同测试不能代替那一次读回。
 3. 不代勾协议，不点提交审核，不调用付费生成。

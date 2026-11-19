@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { callPlugin, listInstances } from './bridge.mjs';
 import { OfficialMcp, OfficialUnreachable } from './official.mjs';
 import { installFromEnvironment } from './plugininstall.mjs';
+import { openIcon, setIcon } from './icons.mjs';
 import { COLD_START, Projects } from './projects.mjs';
 import { redact, redactObject } from './redact.mjs';
 
@@ -45,7 +46,8 @@ export function toolDefinitions() {
       name: 'ext_status',
       description:
         'Diagnostics for this Windows bridge: official MCP connectivity, plugin install result, per-window self-check, and explicit unsupported states. ' +
-        'features.project must be true before project_open / project_new / project_close. Music and icon tools are not enabled; their modules are diagnostic only. ' +
+        'features.project must be true before project_open / project_new / project_close. ' +
+        'icon_set and icon_open run only when that window reports features.icon. A missing icon module does not fail project tools. Music tools are not registered. ' +
         'Cold start without a project window is unsupported. This is not evidence that a real 像塑 editor accepted the plugin.',
       schema: z.strictObject({}),
       run: async (_args, d, projects) => {
@@ -87,11 +89,17 @@ export function toolDefinitions() {
           bootstrap: COLD_START,
           phases: {
             music: { enabled: false, reason: 'not in this slice; ext_status self_check.features.music is diagnostic only' },
-            icon: { enabled: false, reason: 'not in this slice; ext_status self_check.features.icon is diagnostic only' },
+            icon: {
+              registered: ['icon_set', 'icon_open'],
+              editor_acceptance: 'unverified',
+              reason:
+                'Tools are registered. A window runs them only when its self_check.features.icon is true. A missing icon module does not fail project tools. ' +
+                'Icon upload is not effect submission. No 像塑 9.8.3 readback has been recorded.',
+            },
           },
           windows,
           windows_error,
-          shadowed_official_tools: ['ext_status', 'project_open', 'project_new', 'project_close'].filter((name) => officialNames.has(name)),
+          shadowed_official_tools: ['ext_status', 'project_open', 'project_new', 'project_close', 'icon_set', 'icon_open'].filter((name) => officialNames.has(name)),
         };
       },
     },
@@ -123,6 +131,28 @@ export function toolDefinitions() {
         discard_changes: z.boolean().optional().describe('Discard unsaved changes and close. Omitted or false refuses a dirty project.'),
       }),
       run: async (args, _d, projects) => projects.close(args),
+    },
+    {
+      name: 'icon_set',
+      description:
+        'Set the effect icon on one already-open project window. The image is centre-cropped and scaled to a new 360×360 PNG (the source file is not modified), copied onto the icon paths that window reports, then uploaded once. ' +
+        'Pass project_path or instance_id when more than one window is open. Refuses unless that window self_check.features.icon is true. ' +
+        'A disconnect, timeout, or upload result other than true is not retried and is not reported as success. ' +
+        'This is not effect submission: it does not tick a creator agreement, submit for review, publish, or call paid generation.',
+      schema: z.strictObject({
+        ...target,
+        image_path: z.string().min(1).describe('Absolute path of a png, jpeg, gif, or webp file.'),
+        type: z.enum(['both', 'female', 'male', 'common']).optional().describe('both (default) writes the female and male slots. female, male, or common writes that slot.'),
+      }),
+      run: async (args, d, projects) => setIcon(d, projects, args),
+    },
+    {
+      name: 'icon_open',
+      description:
+        'Ask one already-open project window to call showIconCreationWindow. Pass project_path or instance_id when more than one window is open. ' +
+        'Refuses unless features.icon is true. The call is not retried. This bridge does not minimize the window, does not read the window list back, and does not submit, publish, or tick an agreement.',
+      schema: z.strictObject({ ...target }),
+      run: async (args, d, projects) => openIcon(d, projects, args),
     },
   ];
 }

@@ -15,6 +15,8 @@ const required = [
   'package/scripts/rollback.mjs',
   'package/src/server.mjs',
   'package/src/icon-image.mjs',
+  'package/src/icons.mjs',
+  'package/editor-plugin/features/icon.cjs',
 ];
 
 function npm(args, options) {
