@@ -90,18 +90,20 @@ node scripts\install.mjs
 从源码包安装：
 
 ```bat
-tar -xf xiangsu-mcp-plus-win-0.1.4.tgz
+tar -xf xiangsu-mcp-plus-win-0.1.5.tgz
 cd package
 npm install
 set XIANGSU_EDITOR_ROOT=D:\path\to\Douyin AR
 node scripts\install.mjs
 ```
 
-插件目录是 `%LOCALAPPDATA%\DouyinAR\Plugins\v9.8.3\Local\XiangsuMcpPlus@0.1.3`。运行时代码在 `%USERPROFILE%\.xiangsu-mcp-plus-win\editor-plugin\0.1.3\<构建号>\`。不要为了让窗口出现而改用户主目录的 `package.json`。stdio 即使设置了别的 `XIANGSU_MCP_PLUS_STATE`，也会读取默认主目录里的实例文件。同一个 pid 在两个目录里都有活记录且端口或令牌不同时，服务拒绝选择。
+插件目录是 `%LOCALAPPDATA%\DouyinAR\Plugins\v9.8.3\Local\XiangsuMcpPlus@0.1.5`。运行时代码在 `%USERPROFILE%\.xiangsu-mcp-plus-win\editor-plugin\0.1.5\<构建号>\`。不要为了让窗口出现而改用户主目录的 `package.json`。stdio 即使设置了别的 `XIANGSU_MCP_PLUS_STATE`，也会读取默认主目录里的实例文件。同一个 pid 在两个目录里都有活记录且端口或令牌不同时，服务拒绝选择。
 
 `features.project` 在类直接导出（`Project.prototype.isProjectChanged`）或 9.8.3 命名空间（`Project.Project.prototype.isProjectChanged`）时可以为真；两条都没有、也没有已打开工程上的实例方法时仍为假。关闭还要求插件方法和官方 `project_status` 的 `is_changed` 都是 `false`，并且官方 `scene_dirty` 不是 `true`。这还不是编辑器验收，装完要重新打开可丢弃窗口后再看 `ext_status`。
 
 0.1.3 的插件 RPC 每次单独连接（`Connection: close`），避免复用一条已经被对端关掉的 keep-alive 连接。失败时工具文本是 `PLUGIN_RPC_FAILED(<方法>): fetch failed (<原因码>)`，不再只有 `fetch failed`。插件在 `project_launch` / `project_close` 开始和正常结束时写 `rpc start` / `rpc done`，抛错时仍写 `rpc error`。日志和错误里不包含 Bearer 令牌。这次机器上的 `fetch failed` 没有留下原因码，所以还不能断定连接复用就是那次失败的原因；下一次失败应能直接看到原因码，以及请求有没有进到插件。脏状态和窗口身份的拒绝没有放宽。未配置白名单时，普通路径可以操作。
+
+0.1.5 写 DACL 时不从 `PATH` 找 `powershell.exe` 或 `whoami.exe`，只用 `SystemRoot` 下的绝对路径。只有 `System32`、没有 `WindowsPowerShell\v1.0` 的进程也能定位到系统里的 `powershell.exe`。找不到就失败，不跳过 ACL。插件启动失败写到 `logs/plugin.log` 的 `init failed`，并接住异步拒绝。这不是像塑实机验收。
 
 把 stdio 服务交给 MCP 客户端时，用本机的 `node` 运行 `src/server.mjs`，工作目录是本包根目录。服务启动时会再尝试安装；安装失败只记在 `ext_status.plugin_install`，官方转发仍然可以启动。
 
@@ -157,4 +159,4 @@ npm test
 npm run pack
 ```
 
-产物在 `release/xiangsu-mcp-plus-win-0.1.4.tgz`，旁边有 `.sha256`。解压后的包包含 `scripts/install.mjs`、`scripts/uninstall.mjs`、`scripts/rollback.mjs` 和 `src/server.mjs`。包里没有官方程序、素材或令牌。
+产物在 `release/xiangsu-mcp-plus-win-0.1.5.tgz`，旁边有 `.sha256`。解压后的包包含 `scripts/install.mjs`、`scripts/uninstall.mjs`、`scripts/rollback.mjs` 和 `src/server.mjs`。包里没有官方程序、素材或令牌。

@@ -65,6 +65,10 @@ MCP 客户端 --stdio--> src/server.mjs
 
 令牌文件：POSIX 上目录 `0700`、文件 `0600`。Windows 上用当前用户的 SID 新建空的 `FileSecurity` / `DirectorySecurity`，关掉继承，只加入这一条 Allow，再用 `SetAccessControl` 写回。读回使用 `SecurityIdentifier`，只含 ASCII 的 SID，避免显示名编码。`execFile` 取原始字节：有 UTF-16 BOM 或奇数位大量 NUL 时按 UTF-16LE 解码，否则按 UTF-8。`11f7ca3` 的 Windows CI 里，运行时测试用 UTF-8 解码真实 `powershell.exe` 输出并和 `whoami` 对上了，所以那次调用的默认输出不是 UTF-16LE；字节探针写在 `test-results/windows-acl-evidence.json`，由 CI 上传。读回结果里只要还有别的 SID，就删除令牌文件并停止监听。
 
+Windows 上不从 `PATH` 找这两个程序。`SystemRoot`（没有则 `WINDIR`）必须是盘符路径。`whoami.exe` 用 `System32\whoami.exe`，没有再试 `Sysnative\whoami.exe`。`powershell.exe` 依次试 `System32\WindowsPowerShell\v1.0\powershell.exe`、`Sysnative\WindowsPowerShell\v1.0\powershell.exe`、`SysWOW64\WindowsPowerShell\v1.0\powershell.exe`。都没有就是 `ACL_FAILED`，不会改去搜索 `PATH`，也不会跳过 DACL。像塑进程的 `PATH` 可以只有 `System32`：那里有 `whoami.exe`，没有 `powershell.exe`。令牌文件在 SID 或 DACL 没写成功时删除；目录失败不删目录，并停止监听。
+
+`initPlugin` 接住 `start()` 返回的 Promise。失败时状态目录 `logs/plugin.log` 里有 `init failed` 和错误栈，例如 `ACL_FAILED: ...`。运行时记一行，入口的 `.catch` 再记一行，避免编辑器把它当成未处理拒绝。这行日志不表示 ACL 已经通过。
+
 安装：先把将要替换的插件目录整份复制到 `install-backups`，新目录在临时名称下写完并核对之后才替换。写到一半失败时，原来的 `index.js` 还在。服务启动时的自动安装走同一条路径。
 
 生成的插件目录保持清单 `"entry": "index.js"`，并写入只含 `"type": "commonjs"` 的 `package.json`。这是离入口最近的包边界。像塑 9.8.3 的一次加载日志里，`index.js` 被 Node 当成 ES 模块执行，因为从插件目录向上找到了用户主目录的 `"type": "module"`，于是 `require` 抛出 `require is not defined in ES module scope`。`.cjs` 入口在 Node 里也能强制 CommonJS，但编辑器这次实际打开的是清单里的 `index.js`，所以不改入口文件名。`editor-plugin` 复制到状态目录 `editor-plugin/<版本>/<构建号>/`，入口用绝对路径引用那份 `runtime.cjs`。
@@ -82,6 +86,8 @@ MCP 客户端 --stdio--> src/server.mjs
 - 缺 `OpenProjectFromEditCommand` 时 `self_check.ok === false`
 - 曲库模块缺失不单独把 project 判失败，同时 `features.music === false`
 - 令牌不进 401 响应、错误和日志；错误回显里的 Bearer 会被抹掉
+- 精简 `PATH` 下仍用 `SystemRoot` 绝对路径调用 `whoami.exe` / `powershell.exe`；找不到就 `ACL_FAILED`，令牌文件删除
+- 插件启动的异步失败写入 `logs/plugin.log` 的 `init failed`，不留下未处理拒绝
 - pid 启动时间晚于记录则丢弃；进程已退出则丢弃；启动时间查询失败不是空列表
 - 重复打开不发 `project_launch`；非空目标不发 `save_project`；保存断线只调用一次
 - 脏状态、未知脏状态不调用 `project_close`；两个窗口必须点名；同一窗口串行

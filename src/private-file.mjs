@@ -1,6 +1,7 @@
 // Replace a token file's DACL with one Allow entry for the current user, then read it back.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import path from 'node:path';
 
 function psQuote(value) {
   return `'${String(value).replaceAll("'", "''")}'`;
@@ -52,37 +53,71 @@ export function assertPrivateAcl(stdout, sid) {
   }
 }
 
-function currentUserSid(execFile) {
-  const raw = execFile('whoami', ['/user', '/fo', 'csv', '/nh'], { encoding: 'buffer', windowsHide: true });
+function systemRootOf(env, systemRoot) {
+  const raw = systemRoot || env.SystemRoot || env.WINDIR;
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim().replace(/\//g, '\\').replace(/\\+$/, '');
+  if (!/^[A-Za-z]:\\[^:*?"<>|\r\n]*$/.test(trimmed)) return null;
+  if (trimmed.split('\\').includes('..')) return null;
+  return trimmed;
+}
+
+// The editor process PATH includes System32 but not WindowsPowerShell\v1.0.
+// whoami.exe lives in System32; powershell.exe does not. SearchPath/PATH lookup
+// therefore returns ENOENT for powershell. Only these absolute locations are used.
+export function windowsExe(name, { env = process.env, existsSync = fs.existsSync, systemRoot } = {}) {
+  const root = systemRootOf(env, systemRoot);
+  if (!root) throw Error(`ACL_FAILED: SystemRoot is unset or unusable; ${name} is not searched on PATH`);
+  const relative = name === 'powershell.exe'
+    ? [
+        ['System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'],
+        ['Sysnative', 'WindowsPowerShell', 'v1.0', 'powershell.exe'],
+        ['SysWOW64', 'WindowsPowerShell', 'v1.0', 'powershell.exe'],
+      ]
+    : [
+        ['System32', name],
+        ['Sysnative', name],
+      ];
+  for (const parts of relative) {
+    const candidate = path.win32.join(root, ...parts);
+    try {
+      if (existsSync(candidate)) return candidate;
+    } catch {
+      // A bad probe is not a PATH fallback.
+    }
+  }
+  throw Error(`ACL_FAILED: ${name} not found under SystemRoot; PATH is not searched`);
+}
+
+function currentUserSid(execFile, options) {
+  const raw = execFile(windowsExe('whoami.exe', options), ['/user', '/fo', 'csv', '/nh'], { encoding: 'buffer', windowsHide: true });
   const text = decodeProcessOutput(raw);
   const sid = text.match(/S-1-5-[0-9-]+/);
   if (!sid) throw Error('ACL_USER_UNSAFE');
   return sid[0];
 }
 
-export function restrictPrivate(target, { platform = process.platform, execFile = execFileSync } = {}) {
+export function restrictPrivate(target, options = {}) {
+  const { platform = process.platform, execFile = execFileSync } = options;
   const stat = fs.statSync(target);
   if (platform !== 'win32') {
     const mode = stat.isDirectory() ? 0o700 : 0o600;
     fs.chmodSync(target, mode);
     return { method: 'chmod', mode };
   }
-  let sid;
   try {
-    sid = currentUserSid(execFile);
-  } catch (e) {
-    throw Error(String(e.message).startsWith('ACL_') ? e.message : `ACL_FAILED: ${e.message}`);
-  }
-  try {
-    const stdout = execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsAclScript(target, sid, stat.isDirectory())], {
-      encoding: 'buffer',
-      windowsHide: true,
-    });
+    const sid = currentUserSid(execFile, options);
+    const stdout = execFile(
+      windowsExe('powershell.exe', options),
+      ['-NoProfile', '-NonInteractive', '-Command', windowsAclScript(target, sid, stat.isDirectory())],
+      { encoding: 'buffer', windowsHide: true },
+    );
     assertPrivateAcl(decodeProcessOutput(stdout), sid);
     return { method: 'dacl', sid };
   } catch (e) {
     if (!stat.isDirectory()) fs.rmSync(target, { force: true });
-    if (String(e.message).startsWith('ACL_')) throw e;
-    throw Error(`ACL_FAILED: ${e.message}`);
+    const message = e && e.message ? e.message : String(e);
+    if (message.startsWith('ACL_')) throw e instanceof Error ? e : Error(message);
+    throw Error(`ACL_FAILED: ${message}`);
   }
 }
