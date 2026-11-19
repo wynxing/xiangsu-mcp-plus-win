@@ -10,23 +10,33 @@ const { CLOSE_DELAY_MS } = require('../editor-plugin/features/project.cjs');
 function editor(overrides = {}) {
   const calls = [];
   let reads = 0;
-  function Project() {}
+  function ProjectClass() {}
+  if (!overrides.omitChanged) ProjectClass.prototype.isProjectChanged = function () { return false; };
+  const projectInstance = { path: overrides.path === undefined ? 'E:\\probe' : overrides.path };
+  if (!overrides.omitInstanceChanged) {
+    projectInstance.isProjectChanged = () => {
+      reads += 1;
+      if (overrides.changedSequence) return overrides.changedSequence[Math.min(reads - 1, overrides.changedSequence.length - 1)];
+      return overrides.changed ?? false;
+    };
+  }
+  let Project = ProjectClass;
   Project.unload = async () => calls.push('unload');
-  if (!overrides.omitChanged) Project.prototype.isProjectChanged = function () { return false; };
+  if (overrides.namespace) {
+    Project = {
+      unload: async () => calls.push('unload'),
+      getCurrent: () => (overrides.useCurrent ? projectInstance : null),
+      Project: ProjectClass,
+    };
+    Project.Project.unload = async () => calls.push('nested-unload');
+  }
   const registry = {
     [M.ef]: {
       Project,
       ProjectManager: {
         getInstance: () => ({
           hasActiveProject: () => overrides.active !== false,
-          getCurrentActiveProject: () => ({
-            path: overrides.path === undefined ? 'E:\\工作\\probe' : overrides.path,
-            isProjectChanged: () => {
-              reads += 1;
-              if (overrides.changedSequence) return overrides.changedSequence[Math.min(reads - 1, overrides.changedSequence.length - 1)];
-              return overrides.changed ?? false;
-            },
-          }),
+          getCurrentActiveProject: () => projectInstance,
         }),
       },
     },
@@ -115,11 +125,36 @@ test('a window that is not active, or becomes dirty before exit, is not closed',
 });
 
 test('project compatibility requires isProjectChanged', () => {
-  const { lib } = editor({ omitChanged: true });
+  const { lib } = editor({ omitChanged: true, omitInstanceChanged: true });
   const check = lib.selfCheck('project');
   assert.equal(check.ok, false);
+  assert.equal(check.features.project, false);
   assert.ok(check.missing.some((item) => item.includes('isProjectChanged')));
   assert.throws(() => lib.projectClose({}), /INCOMPATIBLE_EDITOR/);
+});
+
+test('9.8.3 namespace Project.Project.prototype.isProjectChanged satisfies the probe and close still calls namespace unload', () => {
+  const { lib, calls } = editor({ namespace: true, changed: false });
+  const check = lib.selfCheck('project');
+  assert.equal(check.features.project, true);
+  assert.equal(check.ok, true);
+  const scheduled = [];
+  lib.schedule = (fn, ms) => scheduled.push({ ms, fn });
+  lib.projectClose({});
+  return scheduled[0].fn().then(() => {
+    assert.deepEqual(calls, ['unload', 'flush', 'no_save_exit']);
+  });
+});
+
+test('an open instance method counts only when neither prototype exists', () => {
+  const open = editor({ namespace: true, omitChanged: true, changed: false });
+  assert.equal(open.lib.selfCheck('project').features.project, true);
+  const closed = editor({ namespace: true, omitChanged: true, omitInstanceChanged: true, active: false });
+  const check = closed.lib.selfCheck('project');
+  assert.equal(check.features.project, false);
+  assert.ok(check.missing.some((item) => item.includes('isProjectChanged')));
+  const classOnly = editor({ active: false, omitInstanceChanged: true });
+  assert.equal(classOnly.lib.selfCheck('project').features.project, true);
 });
 
 test('a clean close schedules unload and does not exit immediately', () => {

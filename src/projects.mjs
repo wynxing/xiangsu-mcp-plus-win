@@ -22,6 +22,7 @@ export const COLD_START = Object.freeze({
 });
 
 const isTempProject = (projectPath) => typeof projectPath === 'string' && projectPath.replace(/\\/g, '/').includes('/ProjectCreatedTmp/');
+const DIRTY_REREAD_MS = 300;
 
 export function pidFromGeneration(generation) {
   const match = /^(\d+)-/.exec(String(generation ?? ''));
@@ -338,7 +339,7 @@ export class Projects {
     return this.locks.run(hit.pid, () => this.closeLocked(hit, args));
   }
 
-  async closeLocked(hit, args) {
+  async pluginDirtyState(hit) {
     let state;
     try {
       state = await this.d.callPlugin('project_state', {}, { pid: hit.pid, timeoutMs: 5000 });
@@ -348,12 +349,59 @@ export class Projects {
     if (!state?.project_path || !this.same(state.project_path, hit.project_path)) {
       throw Error(`PROJECT_PATH_UNREADABLE: project_state path ${state?.project_path ?? 'missing'} does not match ${hit.project_path}; refusing to close`);
     }
-    if (state?.changed !== true && state?.changed !== false) {
+    if (state.changed !== false) {
+      if (state.changed === true) throw Error(`PROJECT_HAS_UNSAVED_CHANGES: ${state.project_path}; refusing to close`);
       throw Error(`UNKNOWN_DIRTY_STATE: unsaved state for pid ${hit.pid} is not true or false; refusing to close`);
     }
-    if (state.changed && !args.discard_changes) {
-      throw Error(`PROJECT_HAS_UNSAVED_CHANGES: ${state.project_path}; save it first or pass discard_changes`);
+    return state;
+  }
+
+  async officialDirtyState(hit) {
+    let instances;
+    try {
+      instances = await this.officialInstances();
+    } catch (e) {
+      throw Error(`OFFICIAL_DIRTY_UNCONFIRMED: ${e.message}; refusing to close`);
     }
+    const official = instances.find((instance) => instance.pid === hit.pid);
+    if (!official?.project_path || !this.same(official.project_path, hit.project_path) || official.instance_id == null) {
+      throw Error(`OFFICIAL_INSTANCE_UNCONFIRMED: refusing to close pid ${hit.pid}; plugin path ${hit.project_path}, official path ${official?.project_path ?? 'missing'}`);
+    }
+    let status;
+    try {
+      status = await this.d.official.callJson('project_status', { instance_id: official.instance_id });
+    } catch (e) {
+      throw Error(`OFFICIAL_DIRTY_UNCONFIRMED: ${e.message}; refusing to close`);
+    }
+    if (!status || typeof status !== 'object') throw Error('OFFICIAL_DIRTY_UNCONFIRMED: project_status was not an object; refusing to close');
+    const reported = status.project_path ?? status.path;
+    if (!reported || !this.same(reported, hit.project_path)) {
+      throw Error(`OFFICIAL_INSTANCE_UNCONFIRMED: project_status path ${reported ?? 'missing'} does not match ${hit.project_path}; refusing to close`);
+    }
+    if (status.generation != null && pidFromGeneration(status.generation) !== hit.pid) {
+      throw Error(`OFFICIAL_INSTANCE_UNCONFIRMED: project_status generation does not match pid ${hit.pid}; refusing to close`);
+    }
+    if (status.pid != null && Number(status.pid) !== hit.pid) {
+      throw Error(`OFFICIAL_INSTANCE_UNCONFIRMED: project_status pid does not match ${hit.pid}; refusing to close`);
+    }
+    if (status.is_changed !== false) {
+      if (status.is_changed === true) throw Error(`PROJECT_HAS_UNSAVED_CHANGES: official is_changed is true for ${hit.project_path}; refusing to close`);
+      throw Error(`OFFICIAL_DIRTY_UNCONFIRMED: official is_changed is not false; refusing to close`);
+    }
+    if (status.scene_dirty === true) throw Error(`PROJECT_HAS_UNSAVED_CHANGES: official scene_dirty is true for ${hit.project_path}; refusing to close`);
+    if (status.scene_dirty !== false) throw Error(`OFFICIAL_DIRTY_UNCONFIRMED: official scene_dirty is not a boolean; refusing to close`);
+    return status;
+  }
+
+  async closeLocked(hit, args) {
+    const state = await this.pluginDirtyState(hit);
+    await this.officialDirtyState(hit);
+    await this.d.sleep(DIRTY_REREAD_MS);
+    const again = await this.pluginDirtyState(hit);
+    if (!this.same(again.project_path, state.project_path)) {
+      throw Error(`PROJECT_PATH_UNREADABLE: project path changed from ${state.project_path} to ${again.project_path}; refusing to close`);
+    }
+    await this.officialDirtyState(hit);
     const res = await this.d.callPlugin('project_close', { discard_changes: !!args.discard_changes }, { pid: hit.pid });
     const gone = await waitFor(() => !this.d.listInstances().some((s) => s.pid === hit.pid), {
       timeoutMs: this.d.closeTimeoutMs,

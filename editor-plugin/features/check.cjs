@@ -8,7 +8,6 @@ const { M } = require('./common.cjs');
 const REQUIRED = {
   project: [
     [M.ef, 'Project.unload'],
-    [M.ef, 'Project.prototype.isProjectChanged'],
     [M.ef, 'ProjectManager.getInstance'],
     [M.analytics, 'AnalyticsBusinessPlugin.instance.flush'],
     [M.analytics, 'AnalyticsBusinessPlugin.instance.safelyExitApplication'],
@@ -42,6 +41,30 @@ const REQUIRED = {
 
 const ENFORCED = new Set(['project']);
 
+// 9.8.3 exports Project as a star namespace. The class is Project.Project.
+// Older builds export the class directly. An open instance method counts only
+// when neither prototype is present. No prototype and no open instance stays incompatible.
+function dirtyMethodFound(mod) {
+  let EF;
+  try {
+    EF = mod(M.ef);
+  } catch {
+    return false;
+  }
+  if (typeof EF?.Project?.prototype?.isProjectChanged === 'function') return true;
+  if (typeof EF?.Project?.Project?.prototype?.isProjectChanged === 'function') return true;
+  try {
+    const pm = typeof EF?.ProjectManager?.getInstance === 'function' ? EF.ProjectManager.getInstance() : null;
+    if (pm && typeof pm.hasActiveProject === 'function' && pm.hasActiveProject() === false) return false;
+    let project = null;
+    if (pm && typeof pm.getCurrentActiveProject === 'function') project = pm.getCurrentActiveProject();
+    if (!project && typeof EF?.Project?.getCurrent === 'function') project = EF.Project.getCurrent();
+    return !!project && typeof project.isProjectChanged === 'function';
+  } catch {
+    return false;
+  }
+}
+
 class Library {
   constructor(mod) {
     this.mod = mod;
@@ -65,6 +88,7 @@ class Library {
           own.push(`${mod} :: ${prop} (${e.message})`);
         }
       }
+      if (name === 'project' && !dirtyMethodFound(this.mod)) own.push(`${M.ef} :: Project.prototype.isProjectChanged`);
       features[name] = own.length === 0;
       missing.push(...own);
     }

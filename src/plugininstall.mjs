@@ -19,8 +19,12 @@ const MARKER = 'install.json';
 const ENTRY_FORMAT = 'cjs-package-boundary-1';
 const PKG_ROOT = fileURLToPath(new URL('..', import.meta.url));
 
+export function defaultStateRoot(homedir = os.homedir) {
+  return path.join(homedir(), '.xiangsu-mcp-plus-win');
+}
+
 export function stateRootOf(env = process.env) {
-  return env.XIANGSU_MCP_PLUS_STATE || path.join(os.homedir(), '.xiangsu-mcp-plus-win');
+  return env.XIANGSU_MCP_PLUS_STATE || defaultStateRoot();
 }
 
 function compareVersions(a, b) {

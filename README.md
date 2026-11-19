@@ -41,7 +41,7 @@ MIT。版权与归属见 [LICENSE](LICENSE) 和 [NOTICE](NOTICE)。
 | `XIANGSU_PLUGIN_ROOT` | 跳过探测，装到这个 `Local` 目录。 |
 | `XIANGSU_LOCALAPPDATA` | 覆盖 `LOCALAPPDATA`。 |
 | `XIANGSU_MCP_URL` | 官方 MCP 地址。 |
-| `XIANGSU_MCP_PLUS_STATE` | 状态目录。默认是用户主目录下的 `.xiangsu-mcp-plus-win`。 |
+| `XIANGSU_MCP_PLUS_STATE` | 状态目录。默认是用户主目录下的 `.xiangsu-mcp-plus-win`。像塑进程通常拿不到这个变量，插件仍写默认目录；stdio 会同时查看默认目录。 |
 | `XIANGSU_ALLOW_PROJECTS` | 生命周期白名单，用 `|` 隔开的绝对路径。未列入的工程不能被打开、新建或关闭。也可以写在未纳入版本库的 `config.local.json` 的 `allowProjects` 数组里。 |
 | `XIANGSU_DENY_PROJECTS` | 黑名单，同样用 `|` 分隔，或写在 `config.local.json` 的 `denyProjects`。命中的目录优先于白名单。 |
 
@@ -73,11 +73,11 @@ node scripts/install.mjs --dry-run
 
 令牌文件在 Windows 上会换成只含当前用户的 DACL，并读回来核对。核对失败就删掉令牌文件并停止监听。POSIX 上目录是 `0700`，文件是 `0600`。
 
-同一版本只有在构建号一致、这份 CommonJS 边界还在、并且状态目录里的 `runtime.cjs` 还在时，再次安装才是 `kept`。0.1.0 没有边界文件，也没有构建号，安装 0.1.1 会替换它，不会把坏的 0.1.0 留在原地。`--force` 仍会重装。
+同一版本只有在构建号一致、这份 CommonJS 边界还在、并且状态目录里的 `runtime.cjs` 还在时，再次安装才是 `kept`。0.1.1 及更早的安装没有 9.8.3 的 `Project.Project` 探测，安装 0.1.2 会替换它们。`--force` 仍会重装。
 
-插件只在带 `--projectType=project` 的工程窗口里启动。已经开着的窗口不会重新加载。装完 0.1.1 之后，关掉可丢弃的工程窗口再打开一次。
+插件只在带 `--projectType=project` 的工程窗口里启动。已经开着的窗口不会重新加载。装完 0.1.2 之后，关掉可丢弃的工程窗口再打开一次。
 
-从已经装过 0.1.0 的机器升级时，不要改 `%USERPROFILE%\package.json`，也不要改像塑程序目录：
+从已经装过 0.1.1 的机器升级时，不要改 `%USERPROFILE%\package.json`，也不要改像塑程序目录：
 
 ```bat
 set XIANGSU_EDITOR_ROOT=D:\path\to\Douyin AR
@@ -85,19 +85,21 @@ node scripts\install.mjs --dry-run
 node scripts\install.mjs
 ```
 
-需要替换时，`--dry-run` 的 `action` 是 `dry-run`，`version` 是 `0.1.1`，`requires_window_reopen` 为真。若 `action` 已是 `kept` 且 `version` 仍是 `0.1.0`，跑到的还是旧包。
+需要替换时，`--dry-run` 的 `action` 是 `dry-run`，`version` 是 `0.1.2`，`requires_window_reopen` 为真。若 `action` 已是 `kept` 且 `version` 仍是 `0.1.1`，跑到的还是旧包。
 
 从源码包安装：
 
 ```bat
-tar -xf xiangsu-mcp-plus-win-0.1.1.tgz
+tar -xf xiangsu-mcp-plus-win-0.1.2.tgz
 cd package
 npm install
 set XIANGSU_EDITOR_ROOT=D:\path\to\Douyin AR
 node scripts\install.mjs
 ```
 
-插件目录是 `%LOCALAPPDATA%\DouyinAR\Plugins\v9.8.3\Local\XiangsuMcpPlus@0.1.1`。运行时代码在 `%USERPROFILE%\.xiangsu-mcp-plus-win\editor-plugin\0.1.1\<构建号>\`。这次安装打印的 `backup.dir` 可以回滚到升级前；回滚回去的 0.1.0 在主目录 `"type": "module"` 下仍然加载失败。
+插件目录是 `%LOCALAPPDATA%\DouyinAR\Plugins\v9.8.3\Local\XiangsuMcpPlus@0.1.2`。运行时代码在 `%USERPROFILE%\.xiangsu-mcp-plus-win\editor-plugin\0.1.2\<构建号>\`。不要为了让窗口出现而改用户主目录的 `package.json`。stdio 即使设置了别的 `XIANGSU_MCP_PLUS_STATE`，也会读取默认主目录里的实例文件。同一个 pid 在两个目录里都有活记录且端口或令牌不同时，服务拒绝选择。
+
+`features.project` 在类直接导出（`Project.prototype.isProjectChanged`）或 9.8.3 命名空间（`Project.Project.prototype.isProjectChanged`）时可以为真；两条都没有、也没有已打开工程上的实例方法时仍为假。关闭还要求插件方法和官方 `project_status` 的 `is_changed` 都是 `false`，并且官方 `scene_dirty` 不是 `true`。这还不是编辑器验收，装完要重新打开可丢弃窗口后再看 `ext_status`。
 
 把 stdio 服务交给 MCP 客户端时，用本机的 `node` 运行 `src/server.mjs`，工作目录是本包根目录。服务启动时会再尝试安装；安装失败只记在 `ext_status.plugin_install`，官方转发仍然可以启动。
 
@@ -153,4 +155,4 @@ npm test
 npm run pack
 ```
 
-产物在 `release/xiangsu-mcp-plus-win-0.1.1.tgz`，旁边有 `.sha256`。解压后的包包含 `scripts/install.mjs`、`scripts/uninstall.mjs`、`scripts/rollback.mjs` 和 `src/server.mjs`。包里没有官方程序、素材或令牌。
+产物在 `release/xiangsu-mcp-plus-win-0.1.2.tgz`，旁边有 `.sha256`。解压后的包包含 `scripts/install.mjs`、`scripts/uninstall.mjs`、`scripts/rollback.mjs` 和 `src/server.mjs`。包里没有官方程序、素材或令牌。

@@ -116,8 +116,8 @@ export function toolDefinitions() {
     {
       name: 'project_close',
       description:
-        'Close one project window via the editor Project.unload path. Refuses when unsaved changes exist unless discard_changes is true. ' +
-        'Refuses when dirty state cannot be read. Does not kill processes, restart the editor, or close a window that was not uniquely selected.',
+        'Close one project window via the namespace Project.unload path. Refuses unless the plugin isProjectChanged() is false and official project_status is_changed is false. ' +
+        'Refuses when scene_dirty is true, when either read fails, or when the official path does not match. Does not kill processes or restart the editor.',
       schema: z.strictObject({
         ...target,
         discard_changes: z.boolean().optional().describe('Discard unsaved changes and close. Omitted or false refuses a dirty project.'),

@@ -22,11 +22,19 @@ function world({ paths } = {}) {
         windows.set(pid, args.path);
         return { save_status: 'succeeded' };
       }
+      if (name === 'project_status') {
+        const found = [...windows].find((entry, index) => String(index + 1) === String(args.instance_id));
+        if (!found) throw Error('missing instance');
+        const merged = { project_path: found[1], generation: `${found[0]}-abc`, is_changed: false, scene_dirty: false, ...d.projectStatus };
+        if (merged.scene_dirty === null) delete merged.scene_dirty;
+        return merged;
+      }
       throw Error(`unexpected ${name}`);
     },
   };
   const d = {
     official,
+    projectStatus: {},
     sleep: async () => {},
     openTimeoutMs: 50,
     closeTimeoutMs: 50,
@@ -156,6 +164,58 @@ test('close refuses a dirty or unknown project and does not call project_close',
   };
   await assert.rejects(new Projects(d).close({ project_path: projectPath }), /UNKNOWN_DIRTY_STATE/);
   assert.equal(calls.includes('project_close'), false);
+});
+
+test('close stays fail-closed unless the plugin and official project_status both stay clean', async () => {
+  const { d, calls, windows } = world();
+  const projectPath = windows.get(100);
+  const base = d.callPlugin;
+  d.projectStatus = { is_changed: false, scene_dirty: false };
+  d.callPlugin = async (method, params, opts) => {
+    if (method === 'project_state') return { project_path: projectPath, changed: true, scene_ready: true };
+    return base(method, params, opts);
+  };
+  await assert.rejects(new Projects(d).close({ project_path: projectPath, discard_changes: true }), /PROJECT_HAS_UNSAVED_CHANGES/);
+  assert.equal(calls.some((call) => call[1] === 'project_close'), false);
+
+  d.projectStatus = { is_changed: true, scene_dirty: false };
+  d.callPlugin = async (method, params, opts) => {
+    if (method === 'project_state') return { project_path: projectPath, changed: false, scene_ready: true };
+    return base(method, params, opts);
+  };
+  await assert.rejects(new Projects(d).close({ project_path: projectPath }), /official is_changed is true/);
+
+  d.projectStatus = { is_changed: false, scene_dirty: true };
+  await assert.rejects(new Projects(d).close({ project_path: projectPath }), /scene_dirty is true/);
+
+  d.projectStatus = { is_changed: false, scene_dirty: null };
+  await assert.rejects(new Projects(d).close({ project_path: projectPath }), /scene_dirty is not a boolean/);
+
+  d.projectStatus = { is_changed: 'no', scene_dirty: false };
+  await assert.rejects(new Projects(d).close({ project_path: projectPath }), /is_changed is not false/);
+
+  d.projectStatus = { is_changed: false, scene_dirty: false, project_path: path.join(projectPath, 'other') };
+  await assert.rejects(new Projects(d).close({ project_path: projectPath }), /OFFICIAL_INSTANCE_UNCONFIRMED/);
+
+  const original = d.official.callJson;
+  d.projectStatus = { is_changed: false, scene_dirty: false };
+  d.official.callJson = async (name, args) => {
+    if (name === 'project_status') throw Error('socket closed');
+    return original(name, args);
+  };
+  await assert.rejects(new Projects(d).close({ project_path: projectPath }), /OFFICIAL_DIRTY_UNCONFIRMED/);
+  d.official.callJson = original;
+
+  let reads = 0;
+  d.callPlugin = async (method, params, opts) => {
+    if (method === 'project_state') {
+      reads += 1;
+      return { project_path: projectPath, changed: reads === 1 ? false : true, scene_ready: true };
+    }
+    return base(method, params, opts);
+  };
+  await assert.rejects(new Projects(d).close({ project_path: projectPath }), /PROJECT_HAS_UNSAVED_CHANGES/);
+  assert.equal(calls.some((call) => call[1] === 'project_close'), false);
 });
 
 test('close with discard_changes targets one instance and waits until that pid is gone', async () => {

@@ -3,21 +3,32 @@
 // than the plugin wrote the record (plus a small clock skew).
 // Adapted from Muqian-Sun/xiangsu-mcp-plus src/bridge.mjs (MIT, Copyright (c) 2026 muqian).
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { longFetch } from './longfetch.mjs';
 import { normalizePath, samePath } from './paths.mjs';
 import { processStartTimes, recordMatchesProcess } from './procinfo.mjs';
 import { redact } from './redact.mjs';
-import { stateRootOf } from './plugininstall.mjs';
+import { defaultStateRoot, stateRootOf } from './plugininstall.mjs';
 
 export function instanceDir(env = process.env) {
   return path.join(stateRootOf(env), 'instances');
 }
 
+// The editor process does not inherit XIANGSU_MCP_PLUS_STATE, so the plugin writes
+// the default home directory. A stdio process with a different state root still
+// has to see that directory. Two live records for one pid are not merged.
+export function instanceDirs(env = process.env, homedir = os.homedir) {
+  const configured = path.join(stateRootOf(env), 'instances');
+  const fallback = path.join(defaultStateRoot(homedir), 'instances');
+  if (path.resolve(configured) === path.resolve(fallback)) return [configured];
+  return [configured, fallback];
+}
+
 export const bridgeTiming = { statusMs: 5000 };
 const lastSeen = new Map();
 
-export function listInstances({ dir = instanceDir(), startTimes = processStartTimes, platform = process.platform } = {}) {
+function readInstanceDir(dir) {
   let names;
   try {
     names = fs.readdirSync(dir);
@@ -25,10 +36,36 @@ export function listInstances({ dir = instanceDir(), startTimes = processStartTi
     if (e.code === 'ENOENT') return [];
     throw e;
   }
-  const records = names.filter((n) => /^\d+\.json$/.test(n)).map((n) => JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8')));
-  if (!records.length) return [];
-  const started = startTimes(records.map((s) => s.pid), { platform });
-  return records.filter((s) => recordMatchesProcess(started.get(Number(s.pid)), s.startedAt));
+  return names.filter((n) => /^\d+\.json$/.test(n)).map((n) => JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8')));
+}
+
+function sameIdentity(a, b) {
+  return a.port === b.port && a.token === b.token;
+}
+
+export function listInstances({ dir, dirs, env = process.env, homedir = os.homedir, startTimes = processStartTimes, platform = process.platform } = {}) {
+  const roots = dirs ?? (dir ? [dir] : instanceDirs(env, homedir));
+  const grouped = new Map();
+  for (const root of roots) {
+    for (const record of readInstanceDir(root)) {
+      const pid = Number(record.pid);
+      if (!grouped.has(pid)) grouped.set(pid, []);
+      grouped.get(pid).push(record);
+    }
+  }
+  if (!grouped.size) return [];
+  const started = startTimes([...grouped.keys()], { platform });
+  const live = [];
+  for (const [pid, records] of grouped) {
+    const matched = records.filter((record) => recordMatchesProcess(started.get(pid), record.startedAt));
+    if (!matched.length) continue;
+    const identity = matched[0];
+    if (matched.some((record) => !sameIdentity(record, identity))) {
+      throw Error(`AMBIGUOUS_INSTANCE_STATE: pid ${pid} has conflicting live records; refusing to choose a token`);
+    }
+    live.push(matched[0]);
+  }
+  return live;
 }
 
 async function post(instance, method, params, timeoutMs) {

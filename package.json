@@ -1,6 +1,6 @@
 {
   "name": "xiangsu-mcp-plus-win",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "Unofficial Windows MCP bridge for Douyin AR (像塑). Forwards the official MCP and adds project window lifecycle the official server does not expose. Learning and personal creation only; not affiliated with ByteDance or Douyin.",
   "license": "MIT",

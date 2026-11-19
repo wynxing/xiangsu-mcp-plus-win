@@ -38,7 +38,7 @@ MCP 客户端 --stdio--> src/server.mjs
 
 - 打开：`OpenProjectFromEditCommand('openLocal', 绝对路径)`。首页进程决定新窗口还是空闲进程。`reuseCurrent` 视为 `WINDOW_LIMIT`，避免把工程换进当前窗口。
 - 新建：`createNew`，等到路径里出现 `ProjectCreatedTmp`，再调用官方 `save_project` **一次**（`intention` 为「新建工程首次保存」）。目标已存在且非空目录则 `TARGET_NOT_EMPTY`，此时不调用保存，也不创建目录。
-- 关闭：`features.project` 包含 `Project.prototype.isProjectChanged`。没有活动工程、没有路径，或 `isProjectChanged` 不是布尔值，都是 `UNKNOWN_DIRTY_STATE`，不能当成未修改。`changed === true` 且没有 `discard_changes` 时拒绝。通过之后延迟 300 ms，在 `Project.unload` 之前再读一次；这时如果不能证明仍然干净，就不卸载、不调用 `safelyExitApplication('no_save_exit')`。失败不会在 `catch` 里改走退出。没有 `taskkill`，没有重启编辑器。
+- 关闭：`features.project` 承认两种导出。旧版 `Project` 就是类，方法在 `Project.prototype.isProjectChanged`。像塑 9.8.3 的 `Project` 是命名空间，类在 `Project.Project`，方法在 `Project.Project.prototype.isProjectChanged`。两条原型都没有、并且没有已打开工程实例上的 `isProjectChanged` 函数时，`features.project` 仍为假。没有活动工程、方法不是函数，或返回值不是布尔值，都是 `UNKNOWN_DIRTY_STATE`。`changed === true` 时拒绝，不再把 `discard_changes` 当成插件侧脏状态的放行条件。通过之后延迟 300 ms，再读一次插件状态，并再读一次官方 `project_status`。官方读失败、`is_changed` 不是 `false`、或 `scene_dirty === true`，都拒绝。`scene_dirty === false` 不能单独证明干净。官方路径、pid、generation 必须和插件窗口一致。只有插件 `isProjectChanged() === false` 且官方 `is_changed === false`（`scene_dirty` 也是布尔值且不是 `true`）才调用命名空间上的 `Project.unload()`，不改走 `Project.Project.unload()`。失败不会在 `catch` 里改走退出。没有 `taskkill`，没有重启编辑器。
 - 同一窗口上的打开、新建、关闭串行。不同窗口可以并行。窗口上限按 2 预检，最终仍以首页进程的 `WINDOW_LIMIT` 为准。
 - 多个窗口时必须给出 `project_path` 或 `instance_id`。路径比较在 Windows 上忽略大小写和斜杠，并做 NFC。
 - 生命周期变更使用白名单。`XIANGSU_ALLOW_PROJECTS` 或未跟踪的 `config.local.json`（`allowProjects`）列出允许的根目录；不在名单里的路径返回 `PROJECT_NOT_ALLOWLISTED`。`XIANGSU_DENY_PROJECTS` / `denyProjects` 优先，返回 `PROTECTED_PROJECT`。仓库不写具体工程名。
@@ -49,7 +49,9 @@ MCP 客户端 --stdio--> src/server.mjs
 
 关闭要求官方 `list_instances` 里存在同一个 pid，且路径与插件路径一致。官方列表是空的、没有这个 pid，或路径不一致，都是 `OFFICIAL_INSTANCE_UNCONFIRMED`，不调用 `project_close`。
 
-`self_check` 强制的只有 `project`：`Project.unload`、`ProjectManager.getInstance`、分析插件的 `flush` / `safelyExitApplication`、`OpenProjectFromEditCommand`、`EditSender.getInstance`、`SceneModule.getEditingSceneService`。缺任何一项，工具抛 `INCOMPATIBLE_EDITOR`。`quietWindows`、`music`、`icon` 只出现在诊断里。编辑器升级后要重跑 `ext_status`。
+`self_check` 强制的只有 `project`：`Project.unload`、`isProjectChanged`（类原型、9.8.3 的 `Project.Project` 原型，或已打开实例上的函数）、`ProjectManager.getInstance`、分析插件的 `flush` / `safelyExitApplication`、`OpenProjectFromEditCommand`、`EditSender.getInstance`、`SceneModule.getEditingSceneService`。缺任何一项，工具抛 `INCOMPATIBLE_EDITOR`。`quietWindows`、`music`、`icon` 只出现在诊断里。编辑器升级后要重跑 `ext_status`。
+
+像塑进程不会继承启动 stdio 服务时的 `XIANGSU_MCP_PLUS_STATE`。插件因此把实例写在默认的用户主目录 `.xiangsu-mcp-plus-win`。stdio 若另设了状态目录，列窗口时同时读这两个 `instances` 目录。同一个 pid 有两份仍活着、端口或令牌不同的记录时拒绝选择，错误里不包含令牌。过期记录不会挡住另一目录里仍然对得上进程启动时间的那一份。
 
 ## 官方转发
 

@@ -54,8 +54,8 @@ const methods = {
   projectClose({ discard_changes = false } = {}) {
     this.ensureCompatible('project');
     const state = this.projectState();
-    if (state.changed !== false && !discard_changes) {
-      if (state.changed === true) throw Error(`PROJECT_HAS_UNSAVED_CHANGES: ${state.project_path}; save it first or pass discard_changes`);
+    if (state.changed !== false) {
+      if (state.changed === true) throw Error(`PROJECT_HAS_UNSAVED_CHANGES: ${state.project_path}; refusing to close`);
       throw Error('UNKNOWN_DIRTY_STATE: unsaved state is not proven clean');
     }
     const { Project } = this.mod(M.ef);
@@ -63,7 +63,7 @@ const methods = {
     this.schedule(() => {
       return (async () => {
         const again = this.projectState();
-        if (again.changed !== false && !discard_changes) {
+        if (again.changed !== false) {
           throw Error(again.changed === true ? `PROJECT_HAS_UNSAVED_CHANGES: ${again.project_path}; not exiting` : 'UNKNOWN_DIRTY_STATE: not exiting');
         }
         await Project.unload();
