@@ -1,16 +1,23 @@
 // Read-only evidence that a saved project still has one Douyin track.
 // effect.dyehpj soundID is the saved id. Assets/main.scene must contain one
-// object named 抖音音乐 with an AudioComponent. MusicInfo.json for that id
+// object named 抖音音乐 with one audio component. 9.8.3 writes that component
+// as DynamicComponent whose name or className is AudioComponent, not as
+// __class AudioComponent. A second object of the same name, or a repeated
+// audio component on the one object, is not a single match. MusicInfo.json for that id
 // must be a regular file inside the project. Nothing here writes or saves.
 import fs from 'node:fs';
 import path from 'node:path';
 
-function scalarName(line) {
-  const match = line.match(/^\s*name:\s*(.*)$/);
+function scalarValue(line, key) {
+  const match = line.match(new RegExp(`^\\s*${key}:\\s*(.*)$`));
   if (!match) return null;
   let value = match[1].replace(/^!<str>\s*/, '').trim();
   if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
   return value;
+}
+
+function scalarName(line) {
+  return scalarValue(line, 'name');
 }
 
 function documents(text) {
@@ -26,9 +33,48 @@ function documents(text) {
   });
 }
 
+function ownField(lines, indent, key) {
+  const line = lines.find((item) => item.match(/^\s*/)[0].length === indent && new RegExp(`^\\s*${key}:`).test(item));
+  return line ? scalarValue(line, key) : null;
+}
+
+function audioComponentCount(chunk, entityIndent) {
+  const items = [];
+  let current = null;
+  let componentsIndent = null;
+  for (const line of chunk) {
+    if (!line.trim()) continue;
+    const indent = line.match(/^\s*/)[0].length;
+    if (componentsIndent === null) {
+      if (indent === entityIndent + 2 && /^\s*components:\s*$/.test(line)) componentsIndent = indent;
+      continue;
+    }
+    const itemHead = line.match(/^(\s*)- (.*)$/);
+    if (itemHead && itemHead[1].length >= componentsIndent) {
+      current = { indent: itemHead[1].length, head: itemHead[2], lines: [] };
+      items.push(current);
+      continue;
+    }
+    if (indent <= componentsIndent) break;
+    if (current && indent > current.indent) current.lines.push(line);
+  }
+  let audio = 0;
+  for (const item of items) {
+    const headClass = item.head.match(/^__class:\s*(\S+)/);
+    const nestedClass = ownField(item.lines, item.indent + 2, '__class');
+    const kind = headClass?.[1] || nestedClass;
+    const name = ownField(item.lines, item.indent + 2, 'name');
+    const className = ownField(item.lines, item.indent + 2, 'className');
+    const dynamicAudio = kind === 'DynamicComponent' && (name === 'AudioComponent' || className === 'AudioComponent');
+    if (kind === 'AudioComponent' || dynamicAudio) audio += 1;
+  }
+  return audio;
+}
+
 function inlineDouyinAudioCount(body) {
   const lines = body.split(/\r?\n/);
-  let count = 0;
+  let named = 0;
+  let audio = 0;
   for (let i = 0; i < lines.length; i += 1) {
     if (!/__class:\s*Entity\b/.test(lines[i])) continue;
     const indent = lines[i].match(/^\s*/)[0].length;
@@ -39,10 +85,12 @@ function inlineDouyinAudioCount(body) {
       chunk.push(line);
     }
     const nameLine = chunk.find((line) => line.match(/^\s*/)[0].length === indent + 2 && /^\s*name:/.test(line));
-    const name = nameLine ? scalarName(nameLine) : null;
-    if (name === '抖音音乐' && /__class:\s*AudioComponent\b/.test(chunk.join('\n'))) count += 1;
+    if (scalarName(nameLine || '') !== '抖音音乐') continue;
+    named += 1;
+    audio += audioComponentCount(chunk, indent);
   }
-  return count;
+  if (named > 1) return named;
+  return audio;
 }
 
 export function officialDouyinAudioCount(value) {
@@ -69,10 +117,20 @@ export function sceneDouyinAudioCount(text) {
       count += inlineDouyinAudioCount(doc.body);
       continue;
     }
-    const nameLine = doc.body.split(/\r?\n/).find((line) => /^\s*name:/.test(line));
+    const bodyLines = doc.body.split(/\r?\n/);
+    const nameLine = bodyLines.find((line) => /^\s*name:/.test(line));
     if (scalarName(nameLine || '') !== '抖音音乐') continue;
-    const linked = [...doc.body.matchAll(/localId:\s*(\d+)/g)].some((match) => byId.get(match[1])?.tag === 'AudioComponent');
-    if (linked || /__class:\s*AudioComponent\b/.test(doc.body)) count += 1;
+    const linked = [...doc.body.matchAll(/localId:\s*(\d+)/g)].filter((match) => {
+      const target = byId.get(match[1]);
+      if (!target) return false;
+      if (target.tag === 'AudioComponent') return true;
+      if (target.tag !== 'DynamicComponent') return false;
+      const lines = target.body.split(/\r?\n/);
+      return ownField(lines, 0, 'name') === 'AudioComponent' || ownField(lines, 0, 'className') === 'AudioComponent';
+    }).length;
+    const inline = audioComponentCount(bodyLines, -2);
+    const audio = linked + inline;
+    count += audio === 0 ? 0 : audio;
   }
   return count;
 }

@@ -114,6 +114,88 @@ test('scene text counts one named object with AudioComponent', () => {
   assert.equal(sceneDouyinAudioCount(separate), 1);
 });
 
+function dynamicAudioScene(extra = '') {
+  return [
+    '%YAML 1.1',
+    '--- !Scene &1',
+    'entities:',
+    '  - __class: Entity',
+    '    name: !<str> 抖音音乐',
+    '    components:',
+    '      - {localId: 7}',
+    '      - __class: DynamicComponent',
+    '        name: !<str> AudioComponent',
+    '        serializedProperty:',
+    '          __class: ScriptSerializedProperty',
+    '          name: !<str> ""',
+    '          properties:',
+    '            __class: Map',
+    '            audioType: !<str> AudioDY',
+    '        className: !<str> AudioComponent',
+    '    layer: 0',
+    extra,
+    '',
+  ].filter((line) => line !== undefined).join('\n');
+}
+
+test('a DynamicComponent named AudioComponent is the saved 9.8.3 audio object', () => {
+  const text = dynamicAudioScene(`  - __class: Entity
+    name: !<str> 特效时间轴
+    components:
+      - __class: DynamicComponent
+        name: !<str> TimelinePlayer
+        serializedProperty:
+          properties:
+            __class: Map
+            decoy: !<str> AudioComponent
+        className: !<str> TimelinePlayer`);
+  assert.equal(sceneDouyinAudioCount(text), 1);
+  const found = assessSavedMusic(project({ sceneText: text }), expected);
+  assert.equal(found.ok, true);
+  assert.equal(found.scene_objects, 1);
+});
+
+test('a non-audio DynamicComponent, a second same-named object, or a repeated audio component is not one object', () => {
+  const onlyTimeline = [
+    '%YAML 1.1',
+    '--- !Scene &1',
+    'entities:',
+    '  - __class: Entity',
+    '    name: !<str> 抖音音乐',
+    '    components:',
+    '      - __class: DynamicComponent',
+    '        name: !<str> TimelinePlayer',
+    '        className: !<str> TimelinePlayer',
+    '',
+  ].join('\n');
+  assert.equal(sceneDouyinAudioCount(onlyTimeline), 0);
+
+  const sameName = dynamicAudioScene(`  - __class: Entity
+    name: !<str> 抖音音乐
+    components:
+      - __class: Transform
+        name: !<str> ""`);
+  assert.equal(sceneDouyinAudioCount(sameName), 2);
+
+  const repeated = [
+    '%YAML 1.1',
+    '--- !Scene &1',
+    'entities:',
+    '  - __class: Entity',
+    '    name: !<str> 抖音音乐',
+    '    components:',
+    '      - __class: DynamicComponent',
+    '        name: !<str> AudioComponent',
+    '        className: !<str> AudioComponent',
+    '      - __class: DynamicComponent',
+    '        name: !<str> AudioComponent',
+    '        className: !<str> AudioComponent',
+    '',
+  ].join('\n');
+  assert.equal(sceneDouyinAudioCount(repeated), 2);
+  assert.equal(assessSavedMusic(project({ sceneText: repeated }), expected).reason, 'SCENE_MISMATCH');
+});
+
 function host(dir, { status = {}, projectPathFor } = {}) {
   const calls = [];
   let statusReads = 0;
