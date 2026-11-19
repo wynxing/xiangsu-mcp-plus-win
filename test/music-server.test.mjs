@@ -110,11 +110,14 @@ test('music_apply binds only a confirmed window and does not retry a lost write'
   const other = absolute('xs-music-other');
   const ok = session([[4, project]], {
     pluginResult: {
-      confirmed: true,
-      binding: 'douyin_library',
+      imported: true,
+      confirmed: false,
+      bound: false,
+      saved: false,
+      binding: 'unconfirmed',
       local_import: false,
       music_id: 'm1',
-      readback: { music_id: 'm1', binding: 'douyin_library' },
+      readback: { music_id: 'm1', binding: 'unconfirmed', scene_saved: false },
       apply_calls: 1,
     },
   });
@@ -126,8 +129,10 @@ test('music_apply binds only a confirmed window and does not retry a lost write'
   });
   assert.equal(bound.isError, undefined);
   const body = JSON.parse(bound.content[0].text);
-  assert.equal(body.confirmed, true);
-  assert.equal(body.binding, 'douyin_library');
+  assert.equal(body.imported, true);
+  assert.equal(body.confirmed, false);
+  assert.equal(body.bound, false);
+  assert.equal(body.binding, 'unconfirmed');
   assert.equal(body.local_import, false);
   assert.equal(body.readback.music_id, 'm1');
   assert.equal(ok.calls.filter((call) => call[1] === 'music_apply').length, 1);

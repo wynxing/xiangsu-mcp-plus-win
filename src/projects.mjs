@@ -342,7 +342,9 @@ export class Projects {
     );
     if (!created) throw Error('NEW_PROJECT_TIMEOUT: no new project window appeared; save_project was not called');
     if (created.ambiguous) throw Error('AMBIGUOUS_NEW_WINDOW: more than one new temporary project appeared; save_project was not called');
+    this.note('window_seen');
     await this.waitReady(created.pid);
+    this.note('ready');
     const official = (await this.officialInstances()).find((instance) => instance.pid === created.pid);
     if (!official?.project_path || !this.same(official.project_path, created.project_path)) {
       throw Error(`STALE_OFFICIAL_INSTANCE: official path ${official?.project_path ?? 'missing'} does not match plugin path ${created.project_path}; save_project was not called`);
@@ -358,6 +360,7 @@ export class Projects {
     this.assertMutable(abs);
     this.assertTargetEmpty(abs);
     this.stopIfDisconnected(true);
+    this.note('official_matched');
     this.note('save_project');
     const instance_id = official.instance_id;
     let saved;

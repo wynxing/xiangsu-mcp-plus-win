@@ -4,8 +4,9 @@ const path = require('path');
 // Douyin music library inside one project window.
 // Module ids are the REQUIRED.music paths already probed by features/check.cjs
 // (from Muqian-Sun/xiangsu-mcp-plus, MIT, Copyright (c) 2026 muqian).
-// A track is chosen only by music_id on the page that listed it. Binding calls
-// setDouyinMusicInfo once and reports success only when that same id is read back.
+// A track is chosen only by music_id on the page that listed it. One
+// setDouyinMusicInfo call can prove a new asset file. It does not prove the
+// current scene binding.
 const { M } = require('./common.cjs');
 
 // Hang guards, not measured editor limits. A timed-out write is not sent again.
@@ -143,15 +144,58 @@ function activeProjectPath(lib) {
   return projectPath;
 }
 
-// 9.8.3 writes the chosen track under Assets/NoImportAsset/<music id>/ at apply
-// time. getDouyinMusicInfo does not exist. getLocalMusicList and
-// getLocalMusicResourceItem are not the bound track. effect.dyehpj soundID and
-// the saved scene object appear only after a later official save; this function
-// does not save.
-function readMusicAsset(projectPath, musicId, item) {
-  const relative = `Assets/NoImportAsset/${musicId}/MusicInfo.json`;
-  const infoPath = path.join(projectPath, 'Assets', 'NoImportAsset', musicId, 'MusicInfo.json');
-  if (!fs.existsSync(infoPath)) return { missing: true, relative };
+// 9.8.3 can write Assets/NoImportAsset/<music id>/MusicInfo.json during
+// setDouyinMusicInfo. That file is import evidence for this call only when it
+// was absent before the call, is not a symlink, and stays inside this project.
+// It is not the current scene binding. soundID and the saved AudioComponent
+// appear after a later official save. This function does not save, and it does
+// not call getDouyinMusicInfo, getLocalMusicList, or getLocalMusicResourceItem.
+function assetPaths(projectPath, musicId) {
+  return {
+    relative: `Assets/NoImportAsset/${musicId}/MusicInfo.json`,
+    dirPath: path.join(projectPath, 'Assets', 'NoImportAsset', musicId),
+    infoPath: path.join(projectPath, 'Assets', 'NoImportAsset', musicId, 'MusicInfo.json'),
+  };
+}
+
+function existedBefore(infoPath) {
+  try {
+    fs.lstatSync(infoPath);
+    return true;
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return false;
+    throw e;
+  }
+}
+
+function sameProject(before, after) {
+  if (process.platform === 'win32') return path.resolve(before).toLowerCase() === path.resolve(after).toLowerCase();
+  return path.resolve(before) === path.resolve(after);
+}
+
+function readNewImport(projectPath, musicId, item, before) {
+  const { relative, dirPath, infoPath } = before;
+  if (before.existed) return { preexisting: true, relative };
+  let dirStat;
+  let fileStat;
+  try {
+    dirStat = fs.lstatSync(dirPath);
+    fileStat = fs.lstatSync(infoPath);
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return { missing: true, relative };
+    return { unreadable: true, relative };
+  }
+  if (dirStat.isSymbolicLink() || fileStat.isSymbolicLink()) return { symlink: true, relative };
+  let root;
+  let resolved;
+  try {
+    root = fs.realpathSync(projectPath);
+    resolved = fs.realpathSync(infoPath);
+  } catch {
+    return { unreadable: true, relative };
+  }
+  const rel = path.relative(root, resolved);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return { symlink: true, relative };
   let parsed;
   try {
     parsed = JSON.parse(fs.readFileSync(infoPath, 'utf8'));
@@ -161,7 +205,7 @@ function readMusicAsset(projectPath, musicId, item) {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { unreadable: true, relative };
   const title = typeof parsed.title === 'string' ? parsed.title : '';
   const expected = typeof item.title === 'string' ? item.title : '';
-  if (title && expected && title !== expected) return { mismatch: true, title, relative };
+  if (expected && title !== expected) return { mismatch: true, title, relative };
   return {
     relative,
     title,
@@ -234,6 +278,7 @@ const methods = {
     }
     if (!active) throw Error('NO_ACTIVE_PROJECT: refusing to bind music without an active project');
     const projectPath = activeProjectPath(this);
+    const before = { ...assetPaths(projectPath, musicId), existed: existedBefore(assetPaths(projectPath, musicId).infoPath) };
     const manager = this.mod(M.musicSquare).MusicSquareManager.instance;
     // Search has no category. Upstream omits that argument. Passing null is a
     // different call and is not used.
@@ -251,20 +296,41 @@ const methods = {
     if (returned === false || returned == null) {
       throw Error(`MUSIC_APPLY_FAILED: ${musicId}; setDouyinMusicInfo rejected the track; not retried`);
     }
-    const asset = readMusicAsset(projectPath, musicId, item);
+    let projectAfter;
+    try {
+      projectAfter = activeProjectPath(this);
+    } catch (e) {
+      throw Error(`MUSIC_APPLY_UNCONFIRMED: ${e.message}; import was not reported; binding unconfirmed; not retried`);
+    }
+    if (!sameProject(projectPath, projectAfter)) {
+      throw Error('PROJECT_IDENTITY_CHANGED: active project path changed during setDouyinMusicInfo; import was not reported; binding unconfirmed; not saved; not retried');
+    }
+    const asset = readNewImport(projectAfter, musicId, item, before);
     if (asset.mismatch) {
       throw Error(`MUSIC_APPLY_MISMATCH: requested ${musicId}, MusicInfo title ${asset.title}; not saved; not retried`);
+    }
+    if (asset.preexisting) {
+      throw Error(
+        `MUSIC_APPLY_UNCONFIRMED: ${musicId}; ${asset.relative} was already present before setDouyinMusicInfo; this call's import is not proven; binding unconfirmed; not saved; not retried`,
+      );
+    }
+    if (asset.symlink) {
+      throw Error(
+        `MUSIC_APPLY_UNCONFIRMED: ${musicId}; ${asset.relative} is a symlink or resolves outside the project; binding unconfirmed; not saved; not retried`,
+      );
     }
     if (asset.missing || asset.unreadable) {
       const returnedLabel = returned === true ? 'true' : typeof returned;
       throw Error(
-        `MUSIC_APPLY_UNCONFIRMED: ${musicId}; setDouyinMusicInfo returned ${returnedLabel}; ${asset.relative} was not found; not saved; not retried`,
+        `MUSIC_APPLY_UNCONFIRMED: ${musicId}; setDouyinMusicInfo returned ${returnedLabel}; ${asset.relative} was not found; binding unconfirmed; not saved; not retried`,
       );
     }
     return {
-      confirmed: true,
+      imported: true,
+      confirmed: false,
+      bound: false,
       saved: false,
-      binding: 'douyin_library',
+      binding: 'unconfirmed',
       local_import: false,
       music_id: musicId,
       title: asset.title || (typeof item.title === 'string' ? item.title : ''),
@@ -278,9 +344,10 @@ const methods = {
         title: asset.title,
         author: asset.author,
         asset: asset.relative,
+        imported: true,
         start_sec: start,
         end_sec: end,
-        binding: 'douyin_library',
+        binding: 'unconfirmed',
         scene_saved: false,
       },
       apply_calls: 1,

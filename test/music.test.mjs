@@ -84,12 +84,23 @@ function musicEditor(overrides = {}) {
       return listState.searchPages;
     }
   }
+  let projectReads = 0;
   const square = {
     setDouyinMusicInfo: async (info, categoryCode) => {
       calls.push(['set', info && info.id, categoryCode, info && info.startTime, info && info.endTime]);
       if (overrides.applyThrows) throw Error('socket hang up');
       const result = overrides.applyReturns !== undefined ? overrides.applyReturns : true;
-      if (overrides.writeAsset !== false && result !== false && result != null && info && info.id != null) {
+      if (overrides.writeAsset === 'symlink' && result !== false && result != null && info && info.id != null) {
+        const outside = path.join(tmpdir('xs-music-link-'), 'outside');
+        fs.mkdirSync(outside, { recursive: true });
+        fs.writeFileSync(
+          path.join(outside, 'MusicInfo.json'),
+          JSON.stringify({ title: overrides.assetTitle ?? info.title, author: info.author, duration: info.duration }),
+        );
+        const dir = path.join(projectPath, 'Assets', 'NoImportAsset', String(info.id));
+        fs.mkdirSync(path.dirname(dir), { recursive: true });
+        fs.symlinkSync(outside, dir, 'dir');
+      } else if (overrides.writeAsset !== false && result !== false && result != null && info && info.id != null) {
         writeMusicAsset(projectPath, { ...info, title: overrides.assetTitle ?? info.title });
       }
       if (result !== false && result != null) square.bound = { ...info };
@@ -118,7 +129,12 @@ function musicEditor(overrides = {}) {
       ProjectManager: {
         getInstance: () => ({
           hasActiveProject: () => overrides.active !== false,
-          getCurrentActiveProject: () => (overrides.active === false ? null : { path: projectPath }),
+          getCurrentActiveProject: () => {
+            if (overrides.active === false) return null;
+            projectReads += 1;
+            if (overrides.pathAfterSet && projectReads > 1) return { path: overrides.pathAfterSet };
+            return { path: projectPath };
+          },
         }),
       },
     },
@@ -208,8 +224,11 @@ test('music_apply binds the exact library id, reads it back, and does not import
     start_sec: 1,
     end_sec: 8,
   });
-  assert.equal(bound.confirmed, true);
-  assert.equal(bound.binding, 'douyin_library');
+  assert.equal(bound.imported, true);
+  assert.equal(bound.confirmed, false);
+  assert.equal(bound.bound, false);
+  assert.equal(bound.saved, false);
+  assert.equal(bound.binding, 'unconfirmed');
   assert.equal(bound.local_import, false);
   assert.equal(bound.music_id, 'm1');
   assert.equal(bound.readback.music_id, 'm1');
@@ -261,11 +280,16 @@ test('an unconfirmed or failed bind is not written again', async () => {
   assert.equal(swapped.calls.filter((call) => Array.isArray(call) && call[0] === 'set').length, 1);
 });
 
-test('a true set is confirmed from NoImportAsset even when the local music readers are empty', async () => {
+test('a new MusicInfo.json is import evidence and is not a current binding', async () => {
   const { lib, calls, projectPath } = musicEditor({ omitReader: true, applyReturns: true, writeAsset: true });
   const bound = await lib.musicApply({ music_id: 'm1', source: 'category', category_code: 'rec' });
-  assert.equal(bound.confirmed, true);
+  assert.equal(bound.imported, true);
+  assert.equal(bound.confirmed, false);
+  assert.equal(bound.bound, false);
   assert.equal(bound.saved, false);
+  assert.equal(bound.binding, 'unconfirmed');
+  assert.equal(bound.readback.binding, 'unconfirmed');
+  assert.equal(bound.readback.scene_saved, false);
   assert.equal(bound.readback.music_id, 'm1');
   assert.equal(bound.readback.asset, 'Assets/NoImportAsset/m1/MusicInfo.json');
   assert.equal(fs.existsSync(path.join(projectPath, 'Assets', 'NoImportAsset', 'm1', 'MusicInfo.json')), true);
@@ -277,18 +301,72 @@ test('a true set is confirmed from NoImportAsset even when the local music reade
   assert.equal(JSON.stringify(bound).includes('effect.dyehpj'), false);
 });
 
-test('music_apply can confirm from the object setDouyinMusicInfo returns', async () => {
+test('the object setDouyinMusicInfo returns is not a binding', async () => {
   const { lib, calls } = musicEditor({
     omitReader: true,
     applyReturns: { id: 's1', title: 'Searched', startTime: 0, endTime: 12 },
     searchPages: [track('s1', { duration: 12 })],
   });
-  const bound = await lib.musicApply({ music_id: 's1', source: 'search', query: 'night', end_sec: 12 });
-  assert.equal(bound.confirmed, true);
-  assert.equal(bound.readback.music_id, 's1');
-  assert.equal(bound.category_code, null);
-  assert.equal(bound.query, 'night');
+  const imported = await lib.musicApply({ music_id: 's1', source: 'search', query: 'night', end_sec: 12 });
+  assert.equal(imported.imported, true);
+  assert.equal(imported.confirmed, false);
+  assert.equal(imported.bound, false);
+  assert.equal(imported.readback.music_id, 's1');
+  assert.equal(imported.category_code, null);
+  assert.equal(imported.query, 'night');
   assert.deepEqual(calls.filter((call) => Array.isArray(call) && call[0] === 'set'), [['set', 's1', undefined, 0, 12]]);
+
+  const unread = musicEditor({
+    applyReturns: { id: 'm1', title: 'Track m1' },
+    writeAsset: false,
+  });
+  await assert.rejects(
+    unread.lib.musicApply({ music_id: 'm1', source: 'category', category_code: 'rec' }),
+    /MUSIC_APPLY_UNCONFIRMED[\s\S]*not retried/,
+  );
+  assert.equal(unread.calls.filter((call) => Array.isArray(call) && call[0] === 'set').length, 1);
+});
+
+test('an old asset, a same-title other id, a symlink, and a project change are not this call', async () => {
+  const old = musicEditor();
+  writeMusicAsset(old.projectPath, track('m1'));
+  await assert.rejects(
+    old.lib.musicApply({ music_id: 'm1', source: 'category', category_code: 'rec' }),
+    /already present before[\s\S]*import is not proven[\s\S]*binding unconfirmed[\s\S]*not retried/,
+  );
+  assert.equal(old.calls.filter((call) => Array.isArray(call) && call[0] === 'set').length, 1);
+
+  const lookalike = musicEditor({ writeAsset: false, pages: [track('m1', { title: 'Same' })] });
+  writeMusicAsset(lookalike.projectPath, track('m2', { title: 'Same' }));
+  await assert.rejects(
+    lookalike.lib.musicApply({ music_id: 'm1', source: 'category', category_code: 'rec' }),
+    /MUSIC_APPLY_UNCONFIRMED[\s\S]*not retried/,
+  );
+  assert.equal(JSON.stringify(lookalike.calls).includes('m2'), false);
+
+  const alongside = musicEditor({ pages: [track('m1', { title: 'Same' })] });
+  writeMusicAsset(alongside.projectPath, track('m2', { title: 'Same' }));
+  const imported = await alongside.lib.musicApply({ music_id: 'm1', source: 'category', category_code: 'rec' });
+  assert.equal(imported.imported, true);
+  assert.equal(imported.confirmed, false);
+  assert.equal(imported.bound, false);
+  assert.equal(imported.music_id, 'm1');
+  assert.equal(imported.readback.asset, 'Assets/NoImportAsset/m1/MusicInfo.json');
+
+  const linked = musicEditor({ writeAsset: 'symlink' });
+  await assert.rejects(
+    linked.lib.musicApply({ music_id: 'm1', source: 'category', category_code: 'rec' }),
+    /symlink[\s\S]*binding unconfirmed[\s\S]*not retried/,
+  );
+  assert.equal(linked.calls.filter((call) => Array.isArray(call) && call[0] === 'set').length, 1);
+
+  const moved = musicEditor({ pathAfterSet: path.join(tmpdir('xs-music-other-'), 'elsewhere') });
+  await assert.rejects(
+    moved.lib.musicApply({ music_id: 'm1', source: 'category', category_code: 'rec' }),
+    /PROJECT_IDENTITY_CHANGED[\s\S]*import was not reported[\s\S]*not retried/,
+  );
+  assert.equal(moved.calls.filter((call) => Array.isArray(call) && call[0] === 'set').length, 1);
+  assert.equal(moved.calls.includes('show-panel'), false);
 });
 
 test('music_apply does not bind when the window has no active project', async () => {

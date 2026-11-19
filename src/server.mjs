@@ -268,6 +268,7 @@ if (isDirect()) {
     mark(`unhandled ${error && error.name ? error.name : 'rejection'}`);
     process.exit(1);
   });
+  process.on('exit', (code) => mark(`exit ${code}`));
   const official = new OfficialMcp();
   official.watch();
   let pluginInstall;
