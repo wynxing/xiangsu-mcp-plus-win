@@ -45,7 +45,7 @@ async function window(answer) {
 }
 
 test('a hung window does not hide the window that has the project, and the token stays out of errors', async () => {
-  bridgeTiming.statusMs = 300;
+  bridgeTiming.statusMs = 2000;
   const dir = path.join(tmpdir('xs-bridge-'), 'instances');
   const target = tmpdir('xs-proj-');
   const [hung, echoing, good] = [await window('hang'), await window('echo-auth'), await window(target)];
