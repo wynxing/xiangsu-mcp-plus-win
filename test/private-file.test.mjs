@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-import { restrictPrivate } from '../src/private-file.mjs';
+import { restrictPrivate, windowsAclScript } from '../src/private-file.mjs';
 import { tmpdir } from '../support/tmp.mjs';
 
 const require = createRequire(import.meta.url);
@@ -26,6 +26,14 @@ function simulator() {
   };
   return { exec, calls };
 }
+
+test('directory ACL script grants the user without using -bor inside New-Object', () => {
+  const script = windowsAclScript('C:\\instances', 'HOST\\user', true);
+  assert.match(script, /DirectorySecurity/);
+  assert.match(script, /FileSystemAccessRule\(\$user, 2032127, 3, 0, 0\)/);
+  assert.equal(script.includes('-bor'), false);
+  assert.equal(pluginAcl.windowsAclScript('C:\\instances', 'HOST\\user', true), script);
+});
 
 test('a DACL that still grants Everyone is rejected and the token file is removed', () => {
   for (const apply of [restrictPrivate, pluginAcl.restrictPrivate]) {
@@ -55,7 +63,9 @@ test('a replaced DACL that reads back as only the current user is kept', () => {
   const script = calls.find((call) => call[0].startsWith('powershell'))[1];
   assert.match(script, /SetAccessRuleProtection\(\$true, \$false\)/);
   assert.match(script, /New-Object System\.Security\.AccessControl\.FileSecurity/);
+  assert.match(script, /FileSystemAccessRule\(\$user, 2032127, 0, 0, 0\)/);
   assert.match(script, /SetAccessControl/);
+  assert.equal(script.includes('-bor'), false);
   assert.equal(script.includes('Get-Acl'), false);
   assert.equal(calls.some((call) => call[0].startsWith('icacls')), false);
   pluginAcl.restrictPrivate(file, { platform: 'win32', execFile: exec });

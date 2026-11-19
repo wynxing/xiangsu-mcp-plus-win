@@ -8,16 +8,17 @@ function psQuote(value) {
 
 export function windowsAclScript(target, user, isDirectory) {
   const kind = isDirectory ? 'Directory' : 'File';
-  const inheritance = isDirectory
-    ? '[System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit'
-    : '[System.Security.AccessControl.InheritanceFlags]::None';
+  // FullControl = 2032127. Inheritance: None = 0, ContainerInherit|ObjectInherit = 3.
+  // Propagation None = 0. AccessControlType Allow = 0.
+  // Numeric flags avoid `-bor` inside New-Object, which Windows PowerShell treats as an argument.
+  const inheritance = isDirectory ? 3 : 0;
   return `
 $ErrorActionPreference = 'Stop'
 $path = ${psQuote(target)}
 $user = ${psQuote(user)}
 $sec = New-Object System.Security.AccessControl.${kind}Security
 $sec.SetAccessRuleProtection($true, $false)
-$rule = New-Object System.Security.AccessControl.FileSystemAccessRule($user, 'FullControl', ${inheritance}, [System.Security.AccessControl.PropagationFlags]::None, 'Allow')
+$rule = New-Object System.Security.AccessControl.FileSystemAccessRule($user, 2032127, ${inheritance}, 0, 0)
 $sec.AddAccessRule($rule)
 [System.IO.${kind}]::SetAccessControl($path, $sec)
 $read = [System.IO.${kind}]::GetAccessControl($path)
