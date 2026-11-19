@@ -234,6 +234,36 @@ test('an unconfirmed or failed bind is not written again', async () => {
   assert.equal(swapped.calls.filter((call) => Array.isArray(call) && call[0] === 'set').length, 1);
 });
 
+test('a true result is confirmed only when a live reader returns the same id', async () => {
+  const listed = musicEditor({ omitReader: true, applyReturns: true });
+  listed.square.getLocalMusicList = () => [{ id: 'other' }, { id: 'm1', title: 'Listed', startTime: 0, endTime: 30 }];
+  listed.square.showMusicAsset = () => listed.calls.push('show-panel');
+  const bound = await listed.lib.musicApply({ music_id: 'm1', source: 'category', category_code: 'rec' });
+  assert.equal(bound.confirmed, true);
+  assert.equal(bound.readback.music_id, 'm1');
+  assert.equal(listed.calls.includes('show-panel'), false);
+  assert.equal(listed.calls.filter((call) => Array.isArray(call) && call[0] === 'set').length, 1);
+
+  const empty = musicEditor({ omitReader: true, applyReturns: true });
+  empty.square.getLocalMusicList = () => [];
+  empty.square.getLocalMusicResourceItem = () => null;
+  empty.square.showMusicAsset = () => empty.calls.push('show-panel');
+  await assert.rejects(
+    empty.lib.musicApply({ music_id: 's1', source: 'search', query: 'night' }),
+    /MUSIC_APPLY_UNCONFIRMED[\s\S]*returned true[\s\S]*getLocalMusicList=0[\s\S]*showMusicAsset was not called[\s\S]*not retried/,
+  );
+  assert.equal(empty.calls.includes('show-panel'), false);
+  assert.deepEqual(
+    empty.calls.filter((call) => Array.isArray(call) && call[0] === 'set'),
+    [['set', 's1', undefined, 0, 30]],
+  );
+
+  const replaced = musicEditor({ omitReader: true, applyReturns: true });
+  replaced.square.getLocalMusicResourceItem = () => ({ id: 'other', title: 'Other' });
+  await assert.rejects(replaced.lib.musicApply({ music_id: 'm1', source: 'category', category_code: 'rec' }), /MUSIC_APPLY_MISMATCH[\s\S]*not retried/);
+  assert.equal(replaced.calls.filter((call) => Array.isArray(call) && call[0] === 'set').length, 1);
+});
+
 test('music_apply can confirm from the object setDouyinMusicInfo returns', async () => {
   const { lib, calls } = musicEditor({
     omitReader: true,
@@ -245,7 +275,7 @@ test('music_apply can confirm from the object setDouyinMusicInfo returns', async
   assert.equal(bound.readback.music_id, 's1');
   assert.equal(bound.category_code, null);
   assert.equal(bound.query, 'night');
-  assert.deepEqual(calls.filter((call) => Array.isArray(call) && call[0] === 'set'), [['set', 's1', null, 0, 12]]);
+  assert.deepEqual(calls.filter((call) => Array.isArray(call) && call[0] === 'set'), [['set', 's1', undefined, 0, 12]]);
 });
 
 test('music_apply does not bind when the window has no active project', async () => {

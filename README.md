@@ -94,14 +94,14 @@ node scripts\install.mjs
 从源码包安装：
 
 ```bat
-tar -xf xiangsu-mcp-plus-win-0.1.7.tgz
+tar -xf xiangsu-mcp-plus-win-0.1.8.tgz
 cd package
 npm ci
 set XIANGSU_EDITOR_ROOT=D:\path\to\Douyin AR
 node scripts\install.mjs
 ```
 
-插件目录是 `%LOCALAPPDATA%\DouyinAR\Plugins\v9.8.3\Local\XiangsuMcpPlus@0.1.7`。运行时代码在 `%USERPROFILE%\.xiangsu-mcp-plus-win\editor-plugin\0.1.7\<构建号>\`。不要为了让窗口出现而改用户主目录的 `package.json`。stdio 即使设置了别的 `XIANGSU_MCP_PLUS_STATE`，也会读取默认主目录里的实例文件。同一个 pid 在两个目录里都有活记录且端口或令牌不同时，服务拒绝选择。
+插件目录是 `%LOCALAPPDATA%\DouyinAR\Plugins\v9.8.3\Local\XiangsuMcpPlus@0.1.8`。运行时代码在 `%USERPROFILE%\.xiangsu-mcp-plus-win\editor-plugin\0.1.8\<构建号>\`。不要为了让窗口出现而改用户主目录的 `package.json`。stdio 即使设置了别的 `XIANGSU_MCP_PLUS_STATE`，也会读取默认主目录里的实例文件。同一个 pid 在两个目录里都有活记录且端口或令牌不同时，服务拒绝选择。
 
 `features.project` 在类直接导出（`Project.prototype.isProjectChanged`）或 9.8.3 命名空间（`Project.Project.prototype.isProjectChanged`）时可以为真；两条都没有、也没有已打开工程上的实例方法时仍为假。关闭还要求插件方法和官方 `project_status` 的 `is_changed` 都是 `false`，并且官方 `scene_dirty` 不是 `true`。这还不是编辑器验收，装完要重新打开可丢弃窗口后再看 `ext_status`。
 
@@ -112,6 +112,8 @@ node scripts\install.mjs
 0.1.6 把同一条绝对路径用到 stdio 的进程启动时间检查和正在运行的编辑器发现。启动时间查不到仍是错误，不是空窗口列表。空闲工程进程（插件已连接、`project_path` 为空）可以发起 `project_open` / `project_new`。首页进程可能把工程放进这个进程，也可能另开一个进程；读回路径对上的那个 pid 才是结果。已经显示工程的窗口不会被换成新工程。没有插件进程时仍不启动编辑器。文件关联不是这个请求。这不是像塑实机验收。
 
 0.1.7 把 0.1.6 与已完成的图标、曲库改动放进同一个安装包。`npm ci` 会安装 `sharp` 0.34.5 的当前平台预编译包。图标和曲库的编辑器读回仍未验收。
+
+0.1.8 的 `music_apply` 仍只调用一次 `setDouyinMusicInfo`。搜索不传 `null` 分类。返回值 `true` 不算绑定成功；确认要读到同一个 `music_id`，来源是返回对象、`getDouyinMusicInfo`、`getLocalMusicResourceItem` 或 `getLocalMusicList`。读不到就仍是 `MUSIC_APPLY_UNCONFIRMED`，并且不打开曲库面板、不再写一次。已经变脏的工程不要关、不要丢弃、不要再绑定。
 
 把 stdio 服务交给 MCP 客户端时，用本机的 `node` 运行 `src/server.mjs`，工作目录是本包根目录。服务启动时会再尝试安装；安装失败只记在 `ext_status.plugin_install`，官方转发仍然可以启动。
 
@@ -181,4 +183,4 @@ npm test
 npm run pack
 ```
 
-产物在 `release/xiangsu-mcp-plus-win-0.1.7.tgz`，旁边有 `.sha256`。解压后的包包含 `npm-shrinkwrap.json`、`scripts/install.mjs`、`scripts/uninstall.mjs`、`scripts/rollback.mjs` 和 `src/server.mjs`。在解压目录执行 `npm ci` 才会装上 `sharp` 0.34.5 的当前平台预编译包。包里没有官方程序、素材或令牌。
+产物在 `release/xiangsu-mcp-plus-win-0.1.8.tgz`，旁边有 `.sha256`。解压后的包包含 `npm-shrinkwrap.json`、`scripts/install.mjs`、`scripts/uninstall.mjs`、`scripts/rollback.mjs` 和 `src/server.mjs`。在解压目录执行 `npm ci` 才会装上 `sharp` 0.34.5 的当前平台预编译包。包里没有官方程序、素材或令牌。

@@ -147,18 +147,50 @@ function methodNames(manager) {
   return [...names].sort();
 }
 
-function readCandidates(returned, manager) {
-  const found = [];
-  if (trackId(returned)) found.push(returned);
-  if (manager && typeof manager.getDouyinMusicInfo === 'function') {
-    try {
-      const current = manager.getDouyinMusicInfo();
-      if (trackId(current)) found.push(current);
-    } catch {
-      // An unreadable getter is reported as an unconfirmed write, not a second apply.
-    }
+function harvest(value, found, depth) {
+  if (depth > 4 || value == null) return;
+  if (Array.isArray(value)) {
+    for (const item of value) harvest(item, found, depth + 1);
+    return;
   }
-  return found;
+  if (typeof value !== 'object') return;
+  if (trackId(value)) found.push(value);
+  for (const key of ['music', 'musicInfo', 'info', 'item', 'resource', 'current', 'list', 'items', 'data']) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) harvest(value[key], found, depth + 1);
+  }
+}
+
+function isCollection(value) {
+  return Array.isArray(value) || (!!value && typeof value === 'object' && (Array.isArray(value.list) || Array.isArray(value.items)));
+}
+
+// 9.8.3's MusicSquareManager has no getDouyinMusicInfo. A boolean true from
+// setDouyinMusicInfo is not an id. Read only the getters the live instance
+// exposes; never call showMusicAsset or another setter from here.
+async function readBoundMusic(manager, returned) {
+  const tried = [];
+  const current = [];
+  const listed = [];
+  const take = async (name, preferList) => {
+    if (!manager || typeof manager[name] !== 'function') return;
+    let value;
+    try {
+      value = await manager[name]();
+    } catch (e) {
+      tried.push(`${name} threw`);
+      return;
+    }
+    const found = [];
+    harvest(value, found, 0);
+    tried.push(`${name}=${found.length}`);
+    const bucket = preferList || isCollection(value) ? listed : current;
+    bucket.push(...found);
+  };
+  if (trackId(returned)) current.push(returned);
+  await take('getDouyinMusicInfo', false);
+  await take('getLocalMusicResourceItem', false);
+  await take('getLocalMusicList', true);
+  return { tried, current, listed };
 }
 
 const methods = {
@@ -225,10 +257,13 @@ const methods = {
     }
     if (!active) throw Error('NO_ACTIVE_PROJECT: refusing to bind music without an active project');
     const manager = this.mod(M.musicSquare).MusicSquareManager.instance;
+    // Search has no category. Upstream omits that argument. Passing null is a
+    // different call and is not used.
+    const categoryArg = categoryCode || undefined;
     let returned;
     try {
       returned = await withTimeout(
-        manager.setDouyinMusicInfo({ ...item, startTime: start, endTime: end }, categoryCode),
+        manager.setDouyinMusicInfo({ ...item, startTime: start, endTime: end }, categoryArg),
         'apply',
         limitMs(this, MUSIC_APPLY_TIMEOUT_MS),
       );
@@ -238,14 +273,16 @@ const methods = {
     if (returned === false || returned == null) {
       throw Error(`MUSIC_APPLY_FAILED: ${musicId}; setDouyinMusicInfo rejected the track; not retried`);
     }
-    const found = readCandidates(returned, manager);
-    if (found.some((value) => trackId(value) !== musicId)) {
-      throw Error(`MUSIC_APPLY_MISMATCH: requested ${musicId}, read back ${found.map((value) => trackId(value)).join(', ')}; not retried`);
+    const { tried, current, listed } = await readBoundMusic(manager, returned);
+    const currentIds = current.map((value) => trackId(value)).filter(Boolean);
+    if (currentIds.some((id) => id !== musicId)) {
+      throw Error(`MUSIC_APPLY_MISMATCH: requested ${musicId}, read back ${currentIds.join(', ')}; not retried`);
     }
-    const match = found.find((value) => trackId(value) === musicId);
+    const match = current.find((value) => trackId(value) === musicId) || listed.find((value) => trackId(value) === musicId);
     if (!match) {
+      const returnedLabel = returned === true ? 'true' : typeof returned;
       throw Error(
-        `MUSIC_APPLY_UNCONFIRMED: ${musicId}; setDouyinMusicInfo returned ${returned === true ? 'true' : typeof returned}; manager methods ${methodNames(manager).join(', ') || 'none'}; bound id was not read back; not retried`,
+        `MUSIC_APPLY_UNCONFIRMED: ${musicId}; setDouyinMusicInfo returned ${returnedLabel}; readers ${tried.join(', ') || 'none'}; manager methods ${methodNames(manager).join(', ') || 'none'}; showMusicAsset was not called; bound id was not read back; not retried`,
       );
     }
     return {
