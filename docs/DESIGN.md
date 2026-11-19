@@ -86,6 +86,7 @@ MCP 客户端 --stdio--> src/server.mjs
 - 重复打开不发 `project_launch`；非空目标不发 `save_project`；保存断线只调用一次
 - 脏状态、未知脏状态不调用 `project_close`；两个窗口必须点名；同一窗口串行
 - 官方 `save_project` 断线后 `callTool` 次数为 1
+- 图标图：png / jpeg / gif / webp 中心裁成正方形再缩成 360×360 PNG；源文件字节不变；坏图、空文件、相对路径不留临时文件
 
 未测，不能写成编辑器验收：
 
@@ -96,8 +97,19 @@ MCP 客户端 --stdio--> src/server.mjs
 - Orion 最小化 / 不抢焦点
 - 曲库绑定和图标上传
 
+## 图标图（本地，未接上传）
+
+上游 `src/icons.mjs`（提交 `05d83470`）用 macOS `sips`：`--cropToHeightWidth` 取较短边的正方形，再 `-z 360 360` 写成新的 PNG。Windows 没有 `sips`。`src/icon-image.mjs` 的 `prepareIcon` 做同一件事，实现是 `sharp` 0.34.5（libvips 预编译包，锁在 `package-lock.json`，`npm ci` 按平台安装，包含 `sharp-win32-x64`）。
+
+- 路径必须是绝对路径。读文件用 Node 的 `fs`，不经过 shell，所以中文和 NFC 路径按系统文件名处理。
+- 格式看文件头，不看扩展名：png、jpeg、gif、webp。空文件、目录、截断的图、认不出的头都拒绝。
+- 先按 EXIF 方向转正（方向 5–8 会交换宽高），再裁正方形。不补边。已经是正方形的只缩放。比 360 小的会放大。动图只取第一帧。
+- 输出是临时目录里的新文件 `xs-icon-*/icon.png`，`wx` 创建。源路径不打开来写。失败时删掉这个临时目录。
+- 源文件大于 40MB，或任一边大于 8192，拒绝。
+- 这不是上传。`features.icon` 仍只出现在诊断里；缺内部模块不会让工程开关失败。
+
 ## 下一阶段（本刀不做）
 
 1. 曲库：`music_categories`、`music_list`、`music_search`、`music_apply`。先看测试窗口里 `features.music`。模块路径与上游 `REQUIRED.music` 相同。
-2. 图标：替换 macOS `sips` 的 360×360 处理，再接 `icon_set` / `icon_open`。上传仍依赖 `REQUIRED.icon` 自检。
+2. 图标上传：本地 360×360 制作已在 `src/icon-image.mjs`（见上）。`icon_set` / `icon_open` 仍未注册。上传仍依赖 `REQUIRED.icon` 自检，而且要能读回目标窗口里的结果。
 3. 不代勾协议，不点提交审核，不调用付费生成。

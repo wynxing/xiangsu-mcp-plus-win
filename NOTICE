@@ -9,6 +9,10 @@ forwarding, and installer behavior from:
   MIT License, Copyright (c) 2026 muqian
   Inspected commit 05d8347073fece93bd80f7dc28e88f0d140efe8b (v0.9.0)
 
+The 360×360 icon file step follows that project's src/icons.mjs contract
+(centre-crop the short side, then scale to a new PNG). The Windows code does
+not call sips. It uses sharp.
+
 The Windows user-plugin directory convention
 `%LOCALAPPDATA%\DouyinAR\Plugins\v<short-version>\Local` follows the layout
 described by sleepyquq/xiangsu-mcp (MIT, Copyright (c) 2026 sleepyquq,
