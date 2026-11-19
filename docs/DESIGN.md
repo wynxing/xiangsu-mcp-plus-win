@@ -19,7 +19,7 @@ MCP 客户端 --stdio--> src/server.mjs
                                状态文件 instances/<pid>.json
 ```
 
-官方已经能做的场景、脚本、预览、保存，只转发，不重写。本刀注册的自有工具只有 `ext_status`、`project_open`、`project_new`、`project_close`。若官方以后也注册了同名工具，自有实现优先，并在 `ext_status.shadowed_official_tools` 里写出来。
+官方已经能做的场景、脚本、预览、保存，只转发，不重写。本仓库注册的自有工具是 `ext_status`、`project_open`、`project_new`、`project_close`，以及曲库 `music_categories`、`music_list`、`music_search`、`music_apply`。若官方以后也注册了同名工具，自有实现优先，并在 `ext_status.shadowed_official_tools` 里写出来。
 
 ## 和笔记不一致、已经改掉的假设
 
@@ -49,7 +49,9 @@ MCP 客户端 --stdio--> src/server.mjs
 
 关闭要求官方 `list_instances` 里存在同一个 pid，且路径与插件路径一致。官方列表是空的、没有这个 pid，或路径不一致，都是 `OFFICIAL_INSTANCE_UNCONFIRMED`，不调用 `project_close`。
 
-`self_check` 强制的只有 `project`：`Project.unload`、`isProjectChanged`（类原型、9.8.3 的 `Project.Project` 原型，或已打开实例上的函数）、`ProjectManager.getInstance`、分析插件的 `flush` / `safelyExitApplication`、`OpenProjectFromEditCommand`、`EditSender.getInstance`、`SceneModule.getEditingSceneService`。缺任何一项，工具抛 `INCOMPATIBLE_EDITOR`。`quietWindows`、`music`、`icon` 只出现在诊断里。编辑器升级后要重跑 `ext_status`。
+`self_check` 强制的只有 `project`：`Project.unload`、`isProjectChanged`（类原型、9.8.3 的 `Project.Project` 原型，或已打开实例上的函数）、`ProjectManager.getInstance`、分析插件的 `flush` / `safelyExitApplication`、`OpenProjectFromEditCommand`、`EditSender.getInstance`、`SceneModule.getEditingSceneService`。缺任何一项，工程工具抛 `INCOMPATIBLE_EDITOR`。曲库工具单独调用 `ensureCompatible('music')`，缺的是 `REQUIRED.music` 里的分类、列表、搜索和 `MusicSquareManager.instance.setDouyinMusicInfo`。这一失败不改变 `features.project`。`quietWindows` 和 `icon` 仍只出现在诊断里。编辑器升级后要重跑 `ext_status`。
+
+曲目的可复用标识是 `music_id` 加 `selection`：`source`（`category` 或 `search`）、对应的 `category_code` 或 `query`，以及取出该页时用的 `page_cursor`（首页为空）。`music_apply` 用这份标识再读同一页，只接受恰好一条相同 `music_id`。标题相同但 id 不同不会绑定。写入只调用 `setDouyinMusicInfo`，结果里的 `binding` 是 `douyin_library`，`local_import` 为假。`confirmed` 为真仅当返回值或同一管理器上的 `getDouyinMusicInfo()` 读回的 id 与请求一致。返回假、id 不一致、调用抛错或读不到 id 时不再调用。`getDouyinMusicInfo` 不在 `REQUIRED.music` 里；真实编辑器若只返回 `true` 且没有这个读取函数，工具给出 `MUSIC_APPLY_UNCONFIRMED` 和当时能看到的方法名，不把这次写成成功。多个窗口必须点名。绑定前官方实例路径要和插件路径一致，并走当时的允许/拒绝名单；名单本身的默认值不在曲库里改。
 
 像塑进程不会继承启动 stdio 服务时的 `XIANGSU_MCP_PLUS_STATE`。插件因此把实例写在默认的用户主目录 `.xiangsu-mcp-plus-win`。stdio 若另设了状态目录，列窗口时同时读这两个 `instances` 目录。同一个 pid 有两份仍活着、端口或令牌不同的记录时拒绝选择，错误里不包含令牌。过期记录不会挡住另一目录里仍然对得上进程启动时间的那一份。
 
@@ -81,6 +83,9 @@ MCP 客户端 --stdio--> src/server.mjs
 - 安装保留其他插件、非法配置不改文件、卸载只删自己、npx 缓存复制
 - 缺 `OpenProjectFromEditCommand` 时 `self_check.ok === false`
 - 曲库模块缺失不单独把 project 判失败，同时 `features.music === false`
+- 分类、列表和搜索返回 `music_id` 与 `selection`，不把曲库原始对象带回客户端
+- `music_apply` 只绑定再读到的那条 id；失败、读回不一致或调用中断都只发出一次 `setDouyinMusicInfo`
+- 两个窗口不点名时不调用曲库；拒绝名单上的工程不绑定；官方路径对不上或窗口已换工程时不绑定
 - 令牌不进 401 响应、错误和日志；错误回显里的 Bearer 会被抹掉
 - pid 启动时间晚于记录则丢弃；进程已退出则丢弃；启动时间查询失败不是空列表
 - 重复打开不发 `project_launch`；非空目标不发 `save_project`；保存断线只调用一次
@@ -94,10 +99,11 @@ MCP 客户端 --stdio--> src/server.mjs
 - 官方 `17320` 的实时工具列表和 `generation` 字段
 - 无窗口启动编辑器的安全命令
 - Orion 最小化 / 不抢焦点
-- 曲库绑定和图标上传
+- 像塑 9.8.3 上 `REQUIRED.music` 是否仍是这些模块路径，以及 `setDouyinMusicInfo` 的返回值能否读出曲目 id
+- 图标上传
 
-## 下一阶段（本刀不做）
+## 还没在编辑器里做完的
 
-1. 曲库：`music_categories`、`music_list`、`music_search`、`music_apply`。先看测试窗口里 `features.music`。模块路径与上游 `REQUIRED.music` 相同。
+1. 曲库工具已经注册。编辑器验收仍待做：先看可丢弃窗口的 `features.music`，再按 README 的曲库步骤核对读回。模块路径与上游 `REQUIRED.music` 相同。
 2. 图标：替换 macOS `sips` 的 360×360 处理，再接 `icon_set` / `icon_open`。上传仍依赖 `REQUIRED.icon` 自检。
 3. 不代勾协议，不点提交审核，不调用付费生成。

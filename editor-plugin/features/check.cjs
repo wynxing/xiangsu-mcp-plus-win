@@ -1,6 +1,8 @@
 'use strict';
 // Capability probe. Project tools call ensureCompatible('project') and refuse when a
-// required internal is missing. Music, icon and quiet-window modules are reported only.
+// required internal is missing. Music tools call ensureCompatible('music') on their
+// own; a missing music module does not fail the project gate. Icon and quiet-window
+// modules stay diagnostic.
 // Required paths for project/music/icon/quietWindows are from
 // Muqian-Sun/xiangsu-mcp-plus editor-plugin/features/assets.cjs (MIT, Copyright (c) 2026 muqian).
 const { M } = require('./common.cjs');
@@ -99,7 +101,7 @@ class Library {
       missing,
       features,
       enforced: [...ENFORCED],
-      not_enabled: ['music', 'icon'],
+      not_enabled: ['icon'],
     };
   }
 

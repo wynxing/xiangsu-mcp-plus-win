@@ -88,7 +88,7 @@ test('music and icon gaps are diagnostic and do not by themselves fail the proje
   assert.equal(check.features.icon, false);
   assert.equal(check.features.quietWindows, false);
   assert.equal(check.diagnostics_ok, false);
-  assert.deepEqual(check.not_enabled, ['music', 'icon']);
+  assert.deepEqual(check.not_enabled, ['icon']);
 });
 
 test('project_launch refuses a reuse answer and project_close refuses dirty or unknown state', async () => {

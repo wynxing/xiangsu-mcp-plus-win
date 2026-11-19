@@ -73,7 +73,8 @@ test('ext_status reports install, cold start, and redacts tokens without faking 
   assert.equal(body.plugin_install.token, '[redacted]');
   assert.equal(body.bootstrap.supported, false);
   assert.equal(body.bootstrap.code, 'WINDOWS_COLD_START_UNVERIFIED');
-  assert.equal(body.phases.music.enabled, false);
+  assert.equal(body.phases.music.enabled, true);
+  assert.equal(body.phases.music.editor_acceptance, 'unverified');
   assert.equal(body.phases.icon.enabled, false);
   assert.match(body.windows_error, /WINDOW_LIST_FAILED/);
   assert.equal(body.contract.editor_acceptance, 'unverified');
@@ -108,7 +109,8 @@ test('the stdio server lists extension tools and forwarded official tools', asyn
   assert.ok(names.includes('get_scene'));
   assert.ok(names.includes('save_project'));
   assert.equal(names.filter((name) => name === 'project_open').length, 1);
-  assert.equal(names.includes('music_apply'), false);
+  assert.equal(names.includes('music_apply'), true);
+  assert.equal(names.includes('music_search'), true);
   assert.equal(names.includes('icon_set'), false);
   const forwarded = listed.tools.find((tool) => tool.name === 'save_project');
   assert.match(forwarded.description, /not retried/);

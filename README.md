@@ -1,6 +1,6 @@
 # xiangsu-mcp-plus-win
 
-非官方的 Windows MCP 桥。它把像塑已经提供的官方 MCP 工具原样转发出来，并只补上官方目前没有的工程窗口开关：`project_open`、`project_new`、`project_close`，外加 `ext_status` 自检。
+非官方的 Windows MCP 桥。它把像塑已经提供的官方 MCP 工具原样转发出来，并补上官方目前没有的工程窗口开关（`project_open`、`project_new`、`project_close`）和抖音曲库（`music_categories`、`music_list`、`music_search`、`music_apply`），外加 `ext_status` 自检。
 
 这不是字节跳动或抖音的产品，与官方没有从属关系。只供学习和个人制作。不要用它提交审核、勾选创作者协议、发布特效，或对不能丢弃的工程做关闭和保存。
 
@@ -22,7 +22,9 @@ MIT。版权与归属见 [LICENSE](LICENSE) 和 [NOTICE](NOTICE)。
 - 已有工程窗口时：`project_open` / `project_new` / `project_close`。
 - 没有工程窗口时：明确返回 `WINDOWS_COLD_START_UNVERIFIED`。本版不会去启动 `Douyin AR.exe`。
 
-曲库和图标工具没有注册。`ext_status` 里的 `features.music` / `features.icon` 只是诊断。
+曲库工具已注册，还没有在像塑里验收。`music_categories`、`music_list`、`music_search` 返回 `category_code` 或 `music_id`，以及可原样交回 `music_apply` 的 `selection`（`source`、`category_code` 或 `query`、`page_cursor`）。绑定只按这个 `music_id` 再读同一页，走曲库的 `setDouyinMusicInfo`，不把本地音频文件导进工程。`confirmed` 只在读回的 id 一致时为真；写完读不到、对不上、或调用中断，都不会再发一次。
+
+多个窗口时曲库工具也要 `project_path` 或 `instance_id`。`music_apply` 沿用当时的允许/拒绝路径规则，并要求插件路径和官方实例路径仍是同一个工程。`features.music` 为假时曲库工具失败，不把 `features.project` 判失败。图标工具没有注册，`features.icon` 只是诊断。
 
 ## 环境
 
@@ -139,6 +141,13 @@ node scripts/rollback.mjs --plugin-root "%LOCALAPPDATA%\DouyinAR\Plugins\v9.8.3\
 9. 关掉新建窗口，删掉临时目录。不要点提交审核，不要勾选协议。
 
 没有工程窗口时，`project_open` 应返回 `NO_EDITOR_WINDOW` 和 `WINDOWS_COLD_START_UNVERIFIED`，并且不会启动编辑器。
+
+曲库还要在可丢弃窗口上另做一次，做完不要保存到不能丢的工程，也不要勾协议或提交审核：
+
+1. `ext_status` 里该窗口的 `self_check.features.music` 必须为真。为假就停，缺的是 `missing` 里的曲库模块，不是工程开关。
+2. `music_categories`，再 `music_search`（或 `music_list`）。记下一条的 `music_id` 和整份 `selection`。
+3. `music_apply` 把这份 `selection` 原样传回，并带上同一个 `project_path` 或 `instance_id`。`confirmed` 为真且 `readback.music_id` 等于所选 id，才算这次绑定对上了。`binding` 应为 `douyin_library`。
+4. 若返回 `MUSIC_APPLY_UNCONFIRMED`、`MUSIC_APPLY_MISMATCH` 或传输失败，不要再调一次。错误里若有可读方法名，记下来即可。不要把合同测试的通过写成编辑器验收。
 
 ## 开发测试
 
