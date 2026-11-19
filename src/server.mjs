@@ -91,7 +91,7 @@ export function toolDefinitions() {
           phases: {
             music: {
               enabled: true,
-              tools: ['music_categories', 'music_list', 'music_search', 'music_apply'],
+              tools: ['music_categories', 'music_list', 'music_search', 'music_apply', 'music_verify'],
               editor_acceptance: 'unverified',
             },
             icon: {

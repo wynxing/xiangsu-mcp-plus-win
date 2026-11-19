@@ -94,14 +94,14 @@ node scripts\install.mjs
 从源码包安装：
 
 ```bat
-tar -xf xiangsu-mcp-plus-win-0.1.9.tgz
+tar -xf xiangsu-mcp-plus-win-0.1.10.tgz
 cd package
 npm ci
 set XIANGSU_EDITOR_ROOT=D:\path\to\Douyin AR
 node scripts\install.mjs
 ```
 
-插件目录是 `%LOCALAPPDATA%\DouyinAR\Plugins\v9.8.3\Local\XiangsuMcpPlus@0.1.9`。运行时代码在 `%USERPROFILE%\.xiangsu-mcp-plus-win\editor-plugin\0.1.9\<构建号>\`。不要为了让窗口出现而改用户主目录的 `package.json`。stdio 即使设置了别的 `XIANGSU_MCP_PLUS_STATE`，也会读取默认主目录里的实例文件。同一个 pid 在两个目录里都有活记录且端口或令牌不同时，服务拒绝选择。
+插件目录是 `%LOCALAPPDATA%\DouyinAR\Plugins\v9.8.3\Local\XiangsuMcpPlus@0.1.10`。运行时代码在 `%USERPROFILE%\.xiangsu-mcp-plus-win\editor-plugin\0.1.10\<构建号>\`。不要为了让窗口出现而改用户主目录的 `package.json`。stdio 即使设置了别的 `XIANGSU_MCP_PLUS_STATE`，也会读取默认主目录里的实例文件。同一个 pid 在两个目录里都有活记录且端口或令牌不同时，服务拒绝选择。
 
 `features.project` 在类直接导出（`Project.prototype.isProjectChanged`）或 9.8.3 命名空间（`Project.Project.prototype.isProjectChanged`）时可以为真；两条都没有、也没有已打开工程上的实例方法时仍为假。关闭还要求插件方法和官方 `project_status` 的 `is_changed` 都是 `false`，并且官方 `scene_dirty` 不是 `true`。这还不是编辑器验收，装完要重新打开可丢弃窗口后再看 `ext_status`。
 
@@ -114,6 +114,8 @@ node scripts\install.mjs
 0.1.7 把 0.1.6 与已完成的图标、曲库改动放进同一个安装包。`npm ci` 会安装 `sharp` 0.34.5 的当前平台预编译包。图标和曲库的编辑器读回仍未验收。
 
 0.1.9 把曲目结果改成导入和绑定两层。`imported: true` 只表示这次新出现的 `MusicInfo.json`。`confirmed` 和 `bound` 保持 `false`，当前场景绑定仍未确认。旧文件、同标题的另一条曲目、符号链接和工程路径变化都不会被报成这次导入或绑定。同一次包里的 `project_new` 在客户端断开后不再调用 `save_project`，并把阶段写到 `logs/stdio.log`。`exit <code>` 只说明 Node 走到了 exit 事件。没有后续行不能单独证明进程被杀掉。这不是 r1 断线的原因结论，也不是像塑实机验收。
+
+0.1.10 增加只读的 `music_verify`。它不调用 `setDouyinMusicInfo`，也不保存工程。用户自己用官方工具保存之后，可以用当前 `project_id`、`music_id` 和资源的标题、作者、时长再读一次。只有已保存的 `soundID`、`MusicInfo.json` 和场景里唯一的「抖音音乐」`AudioComponent` 都对上，才返回 `persisted`、`confirmed`、`bound` 为真，并且 `imported` 仍为假。未保存、旧 `soundID`、旧资源或工程身份变了，都保持未确认。`music_apply` 的语义不变。
 
 把 stdio 服务交给 MCP 客户端时，用本机的 `node` 运行 `src/server.mjs`，工作目录是本包根目录。服务启动时会再尝试安装；安装失败只记在 `ext_status.plugin_install`，官方转发仍然可以启动。
 
@@ -157,7 +159,8 @@ node scripts/rollback.mjs --plugin-root "%LOCALAPPDATA%\DouyinAR\Plugins\v9.8.3\
 1. `ext_status` 里该窗口的 `self_check.features.music` 必须为真。为假就停，缺的是 `missing` 里的曲库模块，不是工程开关。
 2. `music_categories`，再 `music_search`（或 `music_list`）。记下一条的 `music_id` 和整份 `selection`。
 3. `music_apply` 把这份 `selection` 原样传回，并带上同一个 `project_path` 或 `instance_id`。`imported` 为真、`confirmed` 为假、`bound` 为假、`saved` 为假，且 `readback.asset` 是 `Assets/NoImportAsset/<music_id>/MusicInfo.json`，只说明这次导入了该 id 的资源文件。`binding` 应为 `unconfirmed`。不要把这个结果当成当前场景已经绑上，也不要因为还没保存就看不到 `soundID` 而再调一次。
-4. 若返回 `MUSIC_APPLY_UNCONFIRMED`、`MUSIC_APPLY_MISMATCH` 或传输失败，不要再调一次。错误里若有可读方法名，记下来即可。不要把合同测试的通过写成编辑器验收。
+4. 需要保留这次曲目时，单独调用一次官方 `save_project`。保存之后用 `music_verify` 只读核对，参数是当前官方 `project_id`、这条 `music_id`，以及 `MusicInfo.json` 里的标题、作者和时长。`persisted`、`confirmed`、`bound` 都为真且 `imported` 为假，才表示已保存的绑定对上了。不要为了这一步再调用 `music_apply`。
+5. 若返回 `MUSIC_APPLY_UNCONFIRMED`、`MUSIC_APPLY_MISMATCH` 或传输失败，不要再调一次。错误里若有可读方法名，记下来即可。不要把合同测试的通过写成编辑器验收。
 
 图标在同一个可丢弃工程上另做一次，不要提交审核、勾协议、发布或付费：
 
@@ -183,4 +186,4 @@ npm test
 npm run pack
 ```
 
-产物在 `release/xiangsu-mcp-plus-win-0.1.9.tgz`，旁边有 `.sha256`。解压后的包包含 `npm-shrinkwrap.json`、`scripts/install.mjs`、`scripts/uninstall.mjs`、`scripts/rollback.mjs` 和 `src/server.mjs`。在解压目录执行 `npm ci` 才会装上 `sharp` 0.34.5 的当前平台预编译包。包里没有官方程序、素材或令牌。
+产物在 `release/xiangsu-mcp-plus-win-0.1.10.tgz`，旁边有 `.sha256`。解压后的包包含 `npm-shrinkwrap.json`、`scripts/install.mjs`、`scripts/uninstall.mjs`、`scripts/rollback.mjs` 和 `src/server.mjs`。在解压目录执行 `npm ci` 才会装上 `sharp` 0.34.5 的当前平台预编译包。包里没有官方程序、素材或令牌。

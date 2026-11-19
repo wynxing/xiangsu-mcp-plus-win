@@ -2,6 +2,7 @@
 // window with the same allow and deny rules as project open/close, then asks the
 // plugin once. A lost write is not sent again.
 import { z } from 'zod';
+import { assessSavedMusic, officialDouyinAudioCount } from './music-persist.mjs';
 import { COLD_START } from './projects.mjs';
 
 const LIST_TIMEOUT_MS = 25000;
@@ -82,6 +83,106 @@ function browse(method, timeoutMs) {
     });
 }
 
+function verification(partial) {
+  return {
+    persisted: false,
+    confirmed: false,
+    bound: false,
+    imported: false,
+    saved: false,
+    binding: 'unconfirmed',
+    apply_calls: 0,
+    save_calls: 0,
+    sound_id: null,
+    project_id: null,
+    ...partial,
+  };
+}
+
+export async function verifyPersistedMusic(projects, args) {
+  if (!/^[A-Za-z0-9_-]+$/.test(args.music_id)) throw Error('INVALID_MUSIC: music_id is not a single path segment; music was not saved or applied');
+  const hit = await targetWindow(projects, args, { write: false });
+  if (!hit.project_path) throw Error('PROJECT_PATH_UNREADABLE: refusing to read saved music without a project path');
+  projects.assertMutable(hit.project_path);
+  const music_id = args.music_id;
+  let instances;
+  try {
+    instances = await projects.officialInstances();
+  } catch {
+    return verification({ music_id, reason: 'OFFICIAL_STATUS_UNREADABLE' });
+  }
+  const official = instances.find((instance) => instance.pid === hit.pid);
+  if (!official?.project_path || !projects.same(official.project_path, hit.project_path) || official.instance_id == null) {
+    return verification({ music_id, reason: 'PROJECT_SWITCHED' });
+  }
+  let status;
+  try {
+    status = await projects.d.official.callJson('project_status', { instance_id: official.instance_id });
+  } catch {
+    return verification({ music_id, reason: 'OFFICIAL_STATUS_UNREADABLE' });
+  }
+  const reported = status?.project_path ?? status?.path;
+  const project_id = typeof status?.project_id === 'string' ? status.project_id : null;
+  if (!reported || !projects.same(reported, hit.project_path)) return verification({ music_id, project_id, reason: 'PROJECT_SWITCHED' });
+  if (project_id !== args.project_id) return verification({ music_id, project_id, reason: 'PROJECT_ID_MISMATCH' });
+  const clean = status.is_saved === true && status.is_changed === false && status.scene_dirty === false;
+  if (!clean) return verification({ music_id, project_id, saved: status.is_saved === true, reason: 'UNSAVED' });
+  let state;
+  try {
+    state = await projects.d.callPlugin('project_state', {}, { pid: hit.pid, timeoutMs: 5000 });
+  } catch {
+    return verification({ music_id, project_id, saved: true, reason: 'STATE_UNREADABLE' });
+  }
+  if (!state?.project_path || !projects.same(state.project_path, hit.project_path)) return verification({ music_id, project_id, saved: true, reason: 'PROJECT_SWITCHED' });
+  if (state.changed !== false) return verification({ music_id, project_id, saved: true, reason: 'UNSAVED' });
+  const disk = assessSavedMusic(hit.project_path, {
+    musicId: music_id,
+    title: args.title,
+    author: args.author,
+    durationSec: args.duration_sec,
+    projectId: args.project_id,
+  });
+  if (!disk.ok) return verification({ music_id, project_id, saved: true, sound_id: disk.sound_id, reason: disk.reason });
+  let scene;
+  try {
+    scene = await projects.d.official.callJson('get_scene', { instance_id: official.instance_id });
+  } catch {
+    return verification({ music_id, project_id, saved: true, sound_id: disk.sound_id, reason: 'SCENE_UNREADABLE' });
+  }
+  const officialCount = officialDouyinAudioCount(scene);
+  if (officialCount !== 1) {
+    return verification({ music_id, project_id, saved: true, sound_id: disk.sound_id, official_scene_objects: officialCount, reason: 'SCENE_MISMATCH' });
+  }
+  let again;
+  try {
+    again = await projects.d.callPlugin('status', {}, { pid: hit.pid, timeoutMs: 5000 });
+  } catch {
+    return verification({ music_id, project_id, saved: true, sound_id: disk.sound_id, reason: 'PROJECT_SWITCHED' });
+  }
+  if (!again?.projectPath || !projects.same(again.projectPath, hit.project_path)) {
+    return verification({ music_id, project_id, saved: true, sound_id: disk.sound_id, reason: 'PROJECT_SWITCHED' });
+  }
+  return {
+    persisted: true,
+    confirmed: true,
+    bound: true,
+    imported: false,
+    saved: true,
+    binding: 'persisted',
+    music_id,
+    title: args.title,
+    author: args.author,
+    duration_sec: args.duration_sec,
+    project_id,
+    sound_id: disk.sound_id,
+    scene_objects: 1,
+    official_scene_objects: 1,
+    apply_calls: 0,
+    save_calls: 0,
+    reason: 'PERSISTED',
+  };
+}
+
 function selection(args) {
   if (args.source === 'category' && !args.category_code) throw Error('INVALID_CATEGORY: pass category_code from the track selection');
   if (args.source === 'search' && !args.query) throw Error('INVALID_QUERY: pass query from the track selection');
@@ -155,6 +256,23 @@ export function musicToolDefinitions() {
         end_sec: z.number().finite().positive().optional().describe('Clip end in seconds. Defaults to the track duration.'),
       }),
       run: async (args, _d, projects) => callMusic(projects, 'music_apply', selection(args), args, { write: true, timeoutMs: APPLY_TIMEOUT_MS }),
+    },
+    {
+      name: 'music_verify',
+      description:
+        'Read-only check that the open project already has this track saved. Does not call setDouyinMusicInfo and does not save. ' +
+        'persisted, confirmed, and bound are true only when the live project_id matches, official project_status is saved and clean, plugin isProjectChanged is false, effect.dyehpj soundID equals music_id, MusicInfo.json title author and duration match, and both Assets/main.scene and official get_scene show exactly one 抖音音乐 object with AudioComponent. ' +
+        'An unsaved project, a different soundID, an old asset, a symlink, or a different project_id stays persisted false. imported stays false. music_apply is unchanged and still does not turn an import into a binding.',
+      readOnly: true,
+      schema: z.strictObject({
+        ...target,
+        music_id: z.string().min(1).describe('music_id to compare with the saved effect.dyehpj soundID.'),
+        project_id: z.string().min(1).describe('project_id from official project_status for the window being checked.'),
+        title: z.string().min(1).describe('Title expected in MusicInfo.json.'),
+        author: z.string().min(1).describe('Author expected in MusicInfo.json.'),
+        duration_sec: z.number().finite().positive().describe('Duration expected in MusicInfo.json, in seconds.'),
+      }),
+      run: async (args, _d, projects) => verifyPersistedMusic(projects, args),
     },
   ];
 }

@@ -66,7 +66,7 @@ test('music tools are registered once and a same-named official tool stays shado
   });
   const listed = await listToolDefs(d);
   const names = listed.map((tool) => tool.name);
-  for (const name of ['music_categories', 'music_list', 'music_search', 'music_apply']) {
+  for (const name of ['music_categories', 'music_list', 'music_search', 'music_apply', 'music_verify']) {
     assert.equal(names.filter((item) => item === name).length, 1);
   }
   assert.equal(names.includes('icon_set'), true);
@@ -77,6 +77,9 @@ test('music tools are registered once and a same-named official tool stays shado
   assert.equal(apply.annotations.readOnlyHint, false);
   assert.match(search.description, /music_id/);
   assert.match(apply.description, /not retried/);
+  const verify = listed.find((tool) => tool.name === 'music_verify');
+  assert.equal(verify.annotations.readOnlyHint, true);
+  assert.match(verify.description, /does not save/);
 });
 
 test('music_search uses the only open window and refuses an ambiguous choice', async () => {
