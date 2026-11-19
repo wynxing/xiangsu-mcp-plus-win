@@ -1,0 +1,267 @@
+// Open, create and close project windows through an already-open editor window.
+// There is no verified Windows command that opens a .dyehpj without a project window,
+// so that case is refused instead of launching Douyin AR.exe.
+// Focus stealing, minimize, and keyboard/mouse input are not used.
+//
+// Lifecycle contracts adapted from Muqian-Sun/xiangsu-mcp-plus src/projects.mjs
+// (MIT, Copyright (c) 2026 muqian): official save_project for the first save,
+// generation pid prefix, WINDOW_LIMIT retry, unsaved-change refusal.
+import fs from 'node:fs';
+import { KeyedMutex } from './mutex.mjs';
+import { normalizePath, pathApi, pathInside, samePath } from './paths.mjs';
+
+export const MAX_WINDOWS = 2;
+export const COLD_START = Object.freeze({
+  supported: false,
+  code: 'WINDOWS_COLD_START_UNVERIFIED',
+  detail:
+    'No verified Windows invocation opens a .dyehpj without an existing project window. This build does not start Douyin AR.exe. Open any project window (the plugin loads only in windows opened after install) and retry.',
+});
+
+const isTempProject = (projectPath) => typeof projectPath === 'string' && projectPath.replace(/\\/g, '/').includes('/ProjectCreatedTmp/');
+
+export function pidFromGeneration(generation) {
+  const match = /^(\d+)-/.exec(String(generation ?? ''));
+  return match ? Number(match[1]) : null;
+}
+
+export async function waitFor(fn, { timeoutMs, intervalMs = 1000, sleep }) {
+  const end = Date.now() + timeoutMs;
+  for (;;) {
+    const value = await fn();
+    if (value) return value;
+    if (Date.now() >= end) return null;
+    await sleep(intervalMs);
+  }
+}
+
+function denyList(d) {
+  if (d.deny) return d.deny;
+  const raw = d.env?.XIANGSU_DENY_PROJECTS ?? process.env.XIANGSU_DENY_PROJECTS ?? '';
+  return raw.split('|').map((item) => item.trim()).filter(Boolean);
+}
+
+export class Projects {
+  constructor(d) {
+    this.d = d;
+    this.locks = d.locks ?? new KeyedMutex();
+    this.platform = d.platform ?? process.platform;
+  }
+
+  normalize(input) {
+    return normalizePath(input, { platform: this.platform, realpathSync: this.d.realpathSync });
+  }
+
+  same(a, b) {
+    return samePath(a, b, { platform: this.platform, realpathSync: this.d.realpathSync });
+  }
+
+  assertAllowed(target) {
+    for (const denied of denyList(this.d)) {
+      if (pathInside(target, denied, { platform: this.platform, realpathSync: this.d.realpathSync })) {
+        throw Error(`PROTECTED_PROJECT: ${target}`);
+      }
+    }
+  }
+
+  async windows() {
+    let records;
+    try {
+      records = this.d.listInstances();
+    } catch (e) {
+      throw Error(`WINDOW_LIST_FAILED: ${e.message}`);
+    }
+    const rows = [];
+    for (const record of records) {
+      try {
+        const st = await this.d.callPlugin('status', {}, { pid: record.pid, timeoutMs: 5000 });
+        rows.push({ pid: record.pid, project_path: st.projectPath || null });
+      } catch {
+        // A hung window is omitted here; resolveInstance reports it when a path lookup needs it.
+      }
+    }
+    return rows;
+  }
+
+  async officialInstances() {
+    const { instances = [] } = await this.d.official.callJson('list_instances', {});
+    return instances.map((instance) => ({ ...instance, pid: pidFromGeneration(instance.generation) }));
+  }
+
+  async launch(pid, params) {
+    const end = Date.now() + this.d.launchRetryMs;
+    for (;;) {
+      try {
+        return await this.d.callPlugin('project_launch', params, { pid });
+      } catch (e) {
+        if (!String(e.message).includes('WINDOW_LIMIT')) throw e;
+        if (Date.now() >= end) throw e;
+        await this.d.sleep(1000);
+      }
+    }
+  }
+
+  async instanceIdForPid(pid, timeoutMs = 0) {
+    const hit = await waitFor(async () => (await this.officialInstances().catch(() => [])).find((i) => i.pid === pid), {
+      timeoutMs,
+      sleep: this.d.sleep,
+    });
+    return hit ? hit.instance_id : null;
+  }
+
+  async resolveProjectPath({ project_path, instance_id }) {
+    if (instance_id === undefined || instance_id === null) return project_path ? this.normalize(project_path) : undefined;
+    const hit = (await this.officialInstances()).find((i) => String(i.instance_id) === String(instance_id));
+    if (!hit) throw Error(`UNKNOWN_INSTANCE: ${instance_id}`);
+    if (project_path && !this.same(project_path, hit.project_path)) throw Error(`INSTANCE_PROJECT_MISMATCH: instance ${instance_id} has ${hit.project_path}`);
+    return hit.project_path;
+  }
+
+  async waitReady(pid) {
+    const ok = await waitFor(
+      async () => {
+        try {
+          return (await this.d.callPlugin('project_state', {}, { pid, timeoutMs: 5000 })).scene_ready;
+        } catch {
+          return false;
+        }
+      },
+      { timeoutMs: this.d.openTimeoutMs, sleep: this.d.sleep },
+    );
+    if (!ok) throw Error(`SCENE_NOT_READY: window ${pid} did not finish loading its scene`);
+  }
+
+  async open({ path: target }) {
+    const abs = this.normalize(target);
+    this.assertAllowed(abs);
+    const file = pathApi(this.platform).join(abs, 'effect.dyehpj');
+    const exists = this.d.existsSync ?? fs.existsSync;
+    if (!exists(file)) throw Error(`NOT_A_PROJECT: ${abs} has no effect.dyehpj`);
+    const windows = await this.windows();
+    const already = windows.find((w) => w.project_path && this.same(w.project_path, abs));
+    if (already) {
+      return {
+        already_open: true,
+        pid: already.pid,
+        project_path: already.project_path,
+        instance_id: await this.instanceIdForPid(already.pid, this.d.instanceTimeoutMs),
+      };
+    }
+    if (!windows.length) throw Error(`NO_EDITOR_WINDOW: ${COLD_START.detail} (${COLD_START.code})`);
+    if (windows.length >= MAX_WINDOWS) {
+      throw Error(`WINDOW_LIMIT: all ${MAX_WINDOWS} project windows are in use; project_close one before opening another`);
+    }
+    return this.locks.run(windows[0].pid, () => this.openLocked(abs, windows[0].pid));
+  }
+
+  async openLocked(abs, pid) {
+    const windows = await this.windows();
+    const already = windows.find((w) => w.project_path && this.same(w.project_path, abs));
+    if (already) {
+      return {
+        already_open: true,
+        pid: already.pid,
+        project_path: already.project_path,
+        instance_id: await this.instanceIdForPid(already.pid, this.d.instanceTimeoutMs),
+      };
+    }
+    if (windows.length >= MAX_WINDOWS) throw Error(`WINDOW_LIMIT: all ${MAX_WINDOWS} project windows are in use; project_close one before opening another`);
+    await this.launch(pid, { operation: 'openLocal', path: abs });
+    const found = await waitFor(async () => (await this.windows()).find((w) => w.project_path && this.same(w.project_path, abs)), {
+      timeoutMs: this.d.openTimeoutMs,
+      sleep: this.d.sleep,
+    });
+    if (!found) throw Error(`OPEN_TIMEOUT: ${abs} did not finish opening; the editor may be showing a dialog that needs a click`);
+    await this.waitReady(found.pid);
+    return {
+      already_open: false,
+      pid: found.pid,
+      project_path: found.project_path,
+      instance_id: await this.instanceIdForPid(found.pid, this.d.instanceTimeoutMs),
+      background: { minimized: null, focus_policy: 'not_attempted', cold_start: false },
+    };
+  }
+
+  async create({ path: target }) {
+    const abs = this.normalize(target);
+    this.assertAllowed(abs);
+    const exists = this.d.existsSync ?? fs.existsSync;
+    if (exists(abs)) {
+      const stat = (this.d.statSync ?? fs.statSync)(abs);
+      const entries = stat.isDirectory() ? (this.d.readdirSync ?? fs.readdirSync)(abs) : ['file'];
+      if (!stat.isDirectory() || entries.length) throw Error(`TARGET_NOT_EMPTY: ${abs}`);
+    }
+    const windows = await this.windows();
+    if (!windows.length) throw Error(`NO_EDITOR_WINDOW: ${COLD_START.detail} (${COLD_START.code})`);
+    if (windows.length >= MAX_WINDOWS) throw Error(`WINDOW_LIMIT: all ${MAX_WINDOWS} project windows are in use; project_close one first`);
+    return this.locks.run(windows[0].pid, () => this.createLocked(abs, windows[0].pid));
+  }
+
+  async createLocked(abs, pid) {
+    const windows = await this.windows();
+    if (windows.length >= MAX_WINDOWS) throw Error(`WINDOW_LIMIT: all ${MAX_WINDOWS} project windows are in use; project_close one first`);
+    const seen = new Set(windows.map((w) => `${w.pid}|${w.project_path}`));
+    await this.launch(pid, { operation: 'createNew' });
+    const created = await waitFor(
+      async () => (await this.windows()).find((w) => !seen.has(`${w.pid}|${w.project_path}`) && isTempProject(w.project_path)),
+      { timeoutMs: this.d.openTimeoutMs, sleep: this.d.sleep },
+    );
+    if (!created) throw Error('NEW_PROJECT_TIMEOUT: no new project window appeared');
+    await this.waitReady(created.pid);
+    const instance_id = await this.instanceIdForPid(created.pid, this.d.instanceTimeoutMs);
+    if (instance_id === null) throw Error(`NO_OFFICIAL_INSTANCE: window ${created.pid} is not visible to the official MCP`);
+    let saved;
+    try {
+      saved = await this.d.official.callJson('save_project', { instance_id, path: abs, intention: '新建工程首次保存' });
+    } catch (e) {
+      throw Error(`SAVE_FAILED: ${e.message}; save_project was not retried because a mutating official call may already have completed`);
+    }
+    if (saved.save_status !== 'succeeded') throw Error(`SAVE_FAILED: ${JSON.stringify(saved)}; save_project was not retried`);
+    const moved = await waitFor(async () => (await this.windows()).find((w) => w.pid === created.pid && this.same(w.project_path, abs)), {
+      timeoutMs: this.d.saveTimeoutMs,
+      sleep: this.d.sleep,
+    });
+    if (!moved) throw Error(`SAVE_NOT_APPLIED: window ${created.pid} still shows ${created.project_path}`);
+    return {
+      pid: created.pid,
+      instance_id,
+      project_path: abs,
+      save_calls: 1,
+      background: { minimized: null, focus_policy: 'not_attempted', cold_start: false },
+    };
+  }
+
+  async close(args) {
+    const projectPath = await this.resolveProjectPath(args);
+    const windows = await this.windows();
+    const hits = projectPath ? windows.filter((w) => w.project_path && this.same(w.project_path, projectPath)) : windows;
+    if (hits.length !== 1) {
+      throw Error(projectPath ? `NO_UNIQUE_WINDOW for ${projectPath}: ${hits.length} matches` : `AMBIGUOUS_INSTANCE: ${windows.length} windows; pass project_path or instance_id`);
+    }
+    const hit = hits[0];
+    if (hit.project_path) this.assertAllowed(hit.project_path);
+    return this.locks.run(hit.pid, () => this.closeLocked(hit, args));
+  }
+
+  async closeLocked(hit, args) {
+    let state;
+    try {
+      state = await this.d.callPlugin('project_state', {}, { pid: hit.pid, timeoutMs: 5000 });
+    } catch (e) {
+      throw Error(`UNKNOWN_DIRTY_STATE: cannot read unsaved state for pid ${hit.pid} (${e.message}); refusing to close`);
+    }
+    if (state?.changed !== true && state?.changed !== false) {
+      throw Error(`UNKNOWN_DIRTY_STATE: unsaved state for pid ${hit.pid} is not true or false; refusing to close`);
+    }
+    if (state.changed && !args.discard_changes) {
+      throw Error(`PROJECT_HAS_UNSAVED_CHANGES: ${state.project_path}; save it first or pass discard_changes`);
+    }
+    const res = await this.d.callPlugin('project_close', { discard_changes: !!args.discard_changes }, { pid: hit.pid });
+    const gone = await waitFor(() => !this.d.listInstances().some((s) => s.pid === hit.pid), {
+      timeoutMs: this.d.closeTimeoutMs,
+      sleep: this.d.sleep,
+    });
+    if (!gone) throw Error(`CLOSE_TIMEOUT: window ${hit.pid} is still running`);
+    return { closed: true, pid: hit.pid, project_path: res.project_path, discarded_changes: res.discarded_changes };
+  }
+}

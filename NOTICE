@@ -1,0 +1,19 @@
+xiangsu-mcp-plus-win
+Copyright (c) 2026 wynxing
+
+This unofficial Windows port adapts editor-plugin lifecycle, official MCP
+forwarding, and installer behavior from:
+
+  Muqian-Sun/xiangsu-mcp-plus
+  https://github.com/Muqian-Sun/xiangsu-mcp-plus
+  MIT License, Copyright (c) 2026 muqian
+  Inspected commit 05d8347073fece93bd80f7dc28e88f0d140efe8b (v0.9.0)
+
+The Windows user-plugin directory convention
+`%LOCALAPPDATA%\DouyinAR\Plugins\v<short-version>\Local` follows the layout
+described by sleepyquq/xiangsu-mcp (MIT, Copyright (c) 2026 sleepyquq,
+https://github.com/sleepyquq/xiangsu-mcp). That project is not a substitute
+for this one: its file-session bridge and scene tools are not included.
+
+This project is not an official ByteDance or Douyin product. It is for
+learning and personal creation only.

@@ -1,0 +1,36 @@
+{
+  "name": "xiangsu-mcp-plus-win",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Unofficial Windows MCP bridge for Douyin AR (像塑). Forwards the official MCP and adds project window lifecycle the official server does not expose. Learning and personal creation only; not affiliated with ByteDance or Douyin.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "xiangsu-mcp-plus-win": "src/server.mjs",
+    "xiangsu-mcp-plus-win-install": "scripts/install.mjs",
+    "xiangsu-mcp-plus-win-uninstall": "scripts/uninstall.mjs"
+  },
+  "scripts": {
+    "test": "node --test",
+    "install-plugin": "node scripts/install.mjs",
+    "uninstall-plugin": "node scripts/uninstall.mjs",
+    "pack": "node scripts/package-source.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "undici": "^7.30.2",
+    "zod": "^4.1.12"
+  },
+  "files": [
+    "src/",
+    "editor-plugin/",
+    "scripts/install.mjs",
+    "scripts/uninstall.mjs",
+    "docs/",
+    "test/",
+    "support/",
+    "NOTICE"
+  ]
+}

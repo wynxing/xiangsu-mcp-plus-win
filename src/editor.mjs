@@ -1,0 +1,132 @@
+// Locate a Douyin AR / 像塑 install and the versioned user plugin directory.
+// Product root contains Resources. The executable is either
+// <root>\Douyin AR.exe or <root>\electron\Douyin AR.exe.
+// electron\version is Electron's version and is never the editor version.
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { readFileVersion, shortEditorVersion } from './peversion.mjs';
+
+export const EXE_NAME = 'Douyin AR.exe';
+
+function api(platform) {
+  return platform === 'win32' ? path.win32 : path;
+}
+
+export function defaultCandidates({ env = process.env, platform = process.platform } = {}) {
+  const join = api(platform).join;
+  const local = env.XIANGSU_LOCALAPPDATA || env.LOCALAPPDATA;
+  const roots = [
+    local && join(local, 'Douyin AR'),
+    env.ProgramFiles && join(env.ProgramFiles, 'Douyin AR'),
+    env['ProgramFiles(x86)'] && join(env['ProgramFiles(x86)'], 'Douyin AR'),
+  ];
+  return roots.filter(Boolean);
+}
+
+export function layoutFromRoot(root, { platform = process.platform, exists = fs.existsSync } = {}) {
+  const join = api(platform).join;
+  const resources = join(root, 'Resources');
+  const electronExe = join(root, 'electron', EXE_NAME);
+  const topExe = join(root, EXE_NAME);
+  if (exists(electronExe) && exists(resources)) {
+    return { productRoot: root, exe: electronExe, resources, layout: 'electron-subdir' };
+  }
+  // electron\Resources belongs to Electron. The editor's Resources directory is the parent.
+  if (api(platform).basename(root).toLowerCase() === 'electron' && exists(topExe)) {
+    const parent = layoutFromRoot(api(platform).dirname(root), { platform, exists });
+    if (parent) return parent;
+  }
+  if (exists(topExe) && exists(resources)) {
+    return { productRoot: root, exe: topExe, resources, layout: 'product-root' };
+  }
+  return null;
+}
+
+export function userPluginRoot(localAppData, shortVersion, platform = process.platform) {
+  if (!localAppData) throw Error('LOCALAPPDATA_UNSET: set LOCALAPPDATA or XIANGSU_LOCALAPPDATA');
+  if (!/^\d+\.\d+\.\d+$/.test(shortVersion)) throw Error(`EDITOR_VERSION_UNKNOWN: ${shortVersion}`);
+  return api(platform).join(localAppData, 'DouyinAR', 'Plugins', `v${shortVersion}`, 'Local');
+}
+
+function localAppDataOf(env, platform) {
+  if (env.XIANGSU_LOCALAPPDATA) return env.XIANGSU_LOCALAPPDATA;
+  if (env.LOCALAPPDATA) return env.LOCALAPPDATA;
+  if (platform === 'win32' && env.USERPROFILE) return api(platform).join(env.USERPROFILE, 'AppData', 'Local');
+  return null;
+}
+
+function rootFromExe(exe, platform) {
+  const parent = api(platform).dirname(exe);
+  if (api(platform).basename(parent).toLowerCase() === 'electron') return api(platform).dirname(parent);
+  return parent;
+}
+
+export function discoverEditor({
+  env = process.env,
+  platform = process.platform,
+  exists = fs.existsSync,
+  readVersion = readFileVersion,
+  runningExes = null,
+  candidates = null,
+} = {}) {
+  const checked = [];
+  const consider = (root, source) => {
+    checked.push(`${source}: ${root}`);
+    const layout = layoutFromRoot(root, { platform, exists });
+    if (!layout) return null;
+    const fileVersion = readVersion(layout.exe);
+    const { short, file } = shortEditorVersion(fileVersion);
+    const localAppData = localAppDataOf(env, platform);
+    return {
+      ...layout,
+      fileVersion: file,
+      version: short,
+      pluginRoot: userPluginRoot(localAppData, short, platform),
+      source,
+      ignoredElectronVersion: true,
+    };
+  };
+
+  if (env.XIANGSU_EDITOR_EXE) {
+    const found = consider(rootFromExe(env.XIANGSU_EDITOR_EXE, platform), 'XIANGSU_EDITOR_EXE');
+    if (!found) {
+      throw Error(`EDITOR_NOT_FOUND: XIANGSU_EDITOR_EXE=${env.XIANGSU_EDITOR_EXE} is not a product root with Resources (electron\\version is not the editor version)`);
+    }
+    return { ...found, checked };
+  }
+  if (env.XIANGSU_EDITOR_ROOT) {
+    const found = consider(env.XIANGSU_EDITOR_ROOT, 'XIANGSU_EDITOR_ROOT');
+    if (!found) {
+      throw Error(
+        `EDITOR_LAYOUT_UNKNOWN: ${env.XIANGSU_EDITOR_ROOT} needs ${EXE_NAME} and a sibling Resources directory (electron subfolder is accepted). electron\\version is not the editor version.`,
+      );
+    }
+    return { ...found, checked };
+  }
+
+  const running = runningExes ?? (platform === 'win32' ? runningEditorExes() : []);
+  for (const exe of running) {
+    const found = consider(rootFromExe(exe, platform), 'running-process');
+    if (found) return { ...found, checked };
+  }
+  for (const root of candidates ?? defaultCandidates({ env, platform })) {
+    const found = consider(root, 'candidate');
+    if (found) return { ...found, checked };
+  }
+  throw Error(`EDITOR_NOT_FOUND: ${checked.join('; ') || 'no candidates'}. Set XIANGSU_EDITOR_ROOT to the product root that contains Resources.`);
+}
+
+export function runningEditorExes({ execFile = execFileSync, platform = process.platform } = {}) {
+  if (platform !== 'win32') return [];
+  const script = `Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('Douyin AR.exe','orionkit.exe') -and $_.ExecutablePath } | ForEach-Object { $_.ExecutablePath }`;
+  try {
+    const stdout = execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+    return [...new Set(String(stdout).split(/\r?\n/).map((line) => line.trim()).filter(Boolean))];
+  } catch {
+    return [];
+  }
+}
