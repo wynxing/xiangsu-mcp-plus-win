@@ -10,7 +10,7 @@ MIT。版权与归属见 [LICENSE](LICENSE) 和 [NOTICE](NOTICE)。
 
 工程生命周期、回环令牌 RPC 和官方转发，改编自 [Muqian-Sun/xiangsu-mcp-plus](https://github.com/Muqian-Sun/xiangsu-mcp-plus)（MIT，核对到提交 `05d83470`，v0.9.0）。Windows 用户插件目录 `%LOCALAPPDATA%\DouyinAR\Plugins\v<短版本>\Local` 的约定参考了 [sleepyquq/xiangsu-mcp](https://github.com/sleepyquq/xiangsu-mcp)（MIT）。那个仓库的文件会话桥和场景工具没有搬进来，也不能代替这里要补的工程开关。
 
-设计说明见 [docs/DESIGN.md](docs/DESIGN.md)。后续改动先看仓库根目录 [AGENTS.md](AGENTS.md)：合同测试、一次 9.8.3 受控实机、以及还不能写成验收的部分是分开的。
+设计说明见 [docs/DESIGN.md](docs/DESIGN.md)。在本仓库里改代码的方式见 [AGENTS.md](AGENTS.md)。
 
 ## 这一版做什么
 
