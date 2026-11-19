@@ -113,7 +113,7 @@ node scripts\install.mjs
 
 0.1.7 把 0.1.6 与已完成的图标、曲库改动放进同一个安装包。`npm ci` 会安装 `sharp` 0.34.5 的当前平台预编译包。图标和曲库的编辑器读回仍未验收。
 
-0.1.8 的 `music_apply` 仍只调用一次 `setDouyinMusicInfo`。搜索不传 `null` 分类。返回值 `true` 不算绑定成功；确认要读到同一个 `music_id`，来源是返回对象、`getDouyinMusicInfo`、`getLocalMusicResourceItem` 或 `getLocalMusicList`。读不到就仍是 `MUSIC_APPLY_UNCONFIRMED`，并且不打开曲库面板、不再写一次。已经变脏的工程不要关、不要丢弃、不要再绑定。
+`music_apply` 仍只调用一次 `setDouyinMusicInfo`，搜索不传 `null` 分类，也不自动保存工程。返回值 `true` 不算绑定成功。`confirmed` 为真要看到工程里的 `Assets/NoImportAsset/<music_id>/MusicInfo.json`。`getDouyinMusicInfo` 不存在，不再使用。`getLocalMusicList` 和 `getLocalMusicResourceItem` 为空不再当成失败。`effect.dyehpj` 里的 `soundID` 和磁盘场景里的「抖音音乐」要等用户之后明确保存才会落盘。已经变脏的工程不要关、不要丢弃、不要再绑定。这一段还没有单独的安装包版本。
 
 把 stdio 服务交给 MCP 客户端时，用本机的 `node` 运行 `src/server.mjs`，工作目录是本包根目录。服务启动时会再尝试安装；安装失败只记在 `ext_status.plugin_install`，官方转发仍然可以启动。
 
@@ -156,7 +156,7 @@ node scripts/rollback.mjs --plugin-root "%LOCALAPPDATA%\DouyinAR\Plugins\v9.8.3\
 
 1. `ext_status` 里该窗口的 `self_check.features.music` 必须为真。为假就停，缺的是 `missing` 里的曲库模块，不是工程开关。
 2. `music_categories`，再 `music_search`（或 `music_list`）。记下一条的 `music_id` 和整份 `selection`。
-3. `music_apply` 把这份 `selection` 原样传回，并带上同一个 `project_path` 或 `instance_id`。`confirmed` 为真且 `readback.music_id` 等于所选 id，才算这次绑定对上了。`binding` 应为 `douyin_library`。
+3. `music_apply` 把这份 `selection` 原样传回，并带上同一个 `project_path` 或 `instance_id`。`confirmed` 为真、`saved` 为假，且 `readback.asset` 是 `Assets/NoImportAsset/<music_id>/MusicInfo.json`，才算这次绑定对上了。`binding` 应为 `douyin_library`。不要因为还没保存就看不到 `soundID` 而再调一次。
 4. 若返回 `MUSIC_APPLY_UNCONFIRMED`、`MUSIC_APPLY_MISMATCH` 或传输失败，不要再调一次。错误里若有可读方法名，记下来即可。不要把合同测试的通过写成编辑器验收。
 
 图标在同一个可丢弃工程上另做一次，不要提交审核、勾协议、发布或付费：

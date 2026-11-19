@@ -141,7 +141,7 @@ export function musicToolDefinitions() {
       description:
         'Bind one Douyin library track onto the open effect with setDouyinMusicInfo (the library 使用 path, not a local audio file import). ' +
         'Re-reads the category or search page and binds only an exact music_id from selection. The target window must still show that project, and the path must pass the current allow and deny rules. ' +
-        'confirmed is true only when the bound id is read back. A false result, a mismatch, a disconnect, or an unreadable result is not retried.',
+        'confirmed is true only when Assets/NoImportAsset/<music_id>/MusicInfo.json is present after that single call. A boolean true with no asset file is not confirmed. getDouyinMusicInfo is not used. This tool does not save the project; effect.dyehpj soundID and the on-disk scene object appear only after a later explicit save. A false result, a title mismatch, a disconnect, or a missing asset file is not retried.',
       schema: z.strictObject({
         ...target,
         music_id: z.string().min(1).describe('music_id from music_list or music_search.'),

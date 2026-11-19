@@ -1,4 +1,6 @@
 'use strict';
+const fs = require('fs');
+const path = require('path');
 // Douyin music library inside one project window.
 // Module ids are the REQUIRED.music paths already probed by features/check.cjs
 // (from Muqian-Sun/xiangsu-mcp-plus, MIT, Copyright (c) 2026 muqian).
@@ -124,73 +126,47 @@ function clipRange(item, startSec, endSec) {
   return { start, end };
 }
 
-function trackId(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  if (value.id == null || value.id === '') return null;
-  return String(value.id);
+function assertSafeMusicId(musicId) {
+  if (!/^[A-Za-z0-9_-]+$/.test(musicId)) throw Error('INVALID_MUSIC: music_id is not a single path segment');
 }
 
-function methodNames(manager) {
-  const names = new Set();
-  let current = manager;
-  for (let depth = 0; current && current !== Object.prototype && depth < 3; depth += 1) {
-    for (const key of Object.getOwnPropertyNames(current)) {
-      if (key === 'constructor') continue;
-      try {
-        if (typeof current[key] === 'function') names.add(key);
-      } catch {
-        // A throwing accessor is not a readable method name we can report.
-      }
-    }
-    current = Object.getPrototypeOf(current);
+function activeProjectPath(lib) {
+  let project = null;
+  try {
+    const pm = lib.mod(M.ef).ProjectManager.getInstance();
+    if (pm && typeof pm.getCurrentActiveProject === 'function') project = pm.getCurrentActiveProject();
+  } catch (e) {
+    throw Error(`PROJECT_PATH_UNREADABLE: ${e.message}; setDouyinMusicInfo was not called`);
   }
-  return [...names].sort();
+  const projectPath = project && typeof project.path === 'string' ? project.path : '';
+  if (!projectPath) throw Error('PROJECT_PATH_UNREADABLE: the active project path cannot be read; setDouyinMusicInfo was not called');
+  return projectPath;
 }
 
-function harvest(value, found, depth) {
-  if (depth > 4 || value == null) return;
-  if (Array.isArray(value)) {
-    for (const item of value) harvest(item, found, depth + 1);
-    return;
+// 9.8.3 writes the chosen track under Assets/NoImportAsset/<music id>/ at apply
+// time. getDouyinMusicInfo does not exist. getLocalMusicList and
+// getLocalMusicResourceItem are not the bound track. effect.dyehpj soundID and
+// the saved scene object appear only after a later official save; this function
+// does not save.
+function readMusicAsset(projectPath, musicId, item) {
+  const relative = `Assets/NoImportAsset/${musicId}/MusicInfo.json`;
+  const infoPath = path.join(projectPath, 'Assets', 'NoImportAsset', musicId, 'MusicInfo.json');
+  if (!fs.existsSync(infoPath)) return { missing: true, relative };
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(infoPath, 'utf8'));
+  } catch {
+    return { unreadable: true, relative };
   }
-  if (typeof value !== 'object') return;
-  if (trackId(value)) found.push(value);
-  for (const key of ['music', 'musicInfo', 'info', 'item', 'resource', 'current', 'list', 'items', 'data']) {
-    if (Object.prototype.hasOwnProperty.call(value, key)) harvest(value[key], found, depth + 1);
-  }
-}
-
-function isCollection(value) {
-  return Array.isArray(value) || (!!value && typeof value === 'object' && (Array.isArray(value.list) || Array.isArray(value.items)));
-}
-
-// 9.8.3's MusicSquareManager has no getDouyinMusicInfo. A boolean true from
-// setDouyinMusicInfo is not an id. Read only the getters the live instance
-// exposes; never call showMusicAsset or another setter from here.
-async function readBoundMusic(manager, returned) {
-  const tried = [];
-  const current = [];
-  const listed = [];
-  const take = async (name, preferList) => {
-    if (!manager || typeof manager[name] !== 'function') return;
-    let value;
-    try {
-      value = await manager[name]();
-    } catch (e) {
-      tried.push(`${name} threw`);
-      return;
-    }
-    const found = [];
-    harvest(value, found, 0);
-    tried.push(`${name}=${found.length}`);
-    const bucket = preferList || isCollection(value) ? listed : current;
-    bucket.push(...found);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { unreadable: true, relative };
+  const title = typeof parsed.title === 'string' ? parsed.title : '';
+  const expected = typeof item.title === 'string' ? item.title : '';
+  if (title && expected && title !== expected) return { mismatch: true, title, relative };
+  return {
+    relative,
+    title,
+    author: typeof parsed.author === 'string' ? parsed.author : '',
   };
-  if (trackId(returned)) current.push(returned);
-  await take('getDouyinMusicInfo', false);
-  await take('getLocalMusicResourceItem', false);
-  await take('getLocalMusicList', true);
-  return { tried, current, listed };
 }
 
 const methods = {
@@ -233,6 +209,7 @@ const methods = {
     this.ensureCompatible('music');
     if (typeof music_id !== 'string' || !music_id.trim()) throw Error('INVALID_MUSIC: pass music_id from music_list or music_search');
     const musicId = music_id.trim();
+    assertSafeMusicId(musicId);
     let loaded;
     let categoryCode = null;
     let searchQuery = null;
@@ -256,6 +233,7 @@ const methods = {
       throw Error(`NO_ACTIVE_PROJECT: ${e.message}`);
     }
     if (!active) throw Error('NO_ACTIVE_PROJECT: refusing to bind music without an active project');
+    const projectPath = activeProjectPath(this);
     const manager = this.mod(M.musicSquare).MusicSquareManager.instance;
     // Search has no category. Upstream omits that argument. Passing null is a
     // different call and is not used.
@@ -273,35 +251,37 @@ const methods = {
     if (returned === false || returned == null) {
       throw Error(`MUSIC_APPLY_FAILED: ${musicId}; setDouyinMusicInfo rejected the track; not retried`);
     }
-    const { tried, current, listed } = await readBoundMusic(manager, returned);
-    const currentIds = current.map((value) => trackId(value)).filter(Boolean);
-    if (currentIds.some((id) => id !== musicId)) {
-      throw Error(`MUSIC_APPLY_MISMATCH: requested ${musicId}, read back ${currentIds.join(', ')}; not retried`);
+    const asset = readMusicAsset(projectPath, musicId, item);
+    if (asset.mismatch) {
+      throw Error(`MUSIC_APPLY_MISMATCH: requested ${musicId}, MusicInfo title ${asset.title}; not saved; not retried`);
     }
-    const match = current.find((value) => trackId(value) === musicId) || listed.find((value) => trackId(value) === musicId);
-    if (!match) {
+    if (asset.missing || asset.unreadable) {
       const returnedLabel = returned === true ? 'true' : typeof returned;
       throw Error(
-        `MUSIC_APPLY_UNCONFIRMED: ${musicId}; setDouyinMusicInfo returned ${returnedLabel}; readers ${tried.join(', ') || 'none'}; manager methods ${methodNames(manager).join(', ') || 'none'}; showMusicAsset was not called; bound id was not read back; not retried`,
+        `MUSIC_APPLY_UNCONFIRMED: ${musicId}; setDouyinMusicInfo returned ${returnedLabel}; ${asset.relative} was not found; not saved; not retried`,
       );
     }
     return {
       confirmed: true,
+      saved: false,
       binding: 'douyin_library',
       local_import: false,
       music_id: musicId,
-      title: typeof match.title === 'string' ? match.title : typeof item.title === 'string' ? item.title : '',
-      author: typeof match.author === 'string' ? match.author : typeof item.author === 'string' ? item.author : '',
-      start_sec: typeof match.startTime === 'number' ? match.startTime : start,
-      end_sec: typeof match.endTime === 'number' ? match.endTime : end,
+      title: asset.title || (typeof item.title === 'string' ? item.title : ''),
+      author: asset.author || (typeof item.author === 'string' ? item.author : ''),
+      start_sec: start,
+      end_sec: end,
       category_code: categoryCode,
       query: searchQuery,
       readback: {
         music_id: musicId,
-        title: typeof match.title === 'string' ? match.title : '',
-        start_sec: typeof match.startTime === 'number' ? match.startTime : start,
-        end_sec: typeof match.endTime === 'number' ? match.endTime : end,
+        title: asset.title,
+        author: asset.author,
+        asset: asset.relative,
+        start_sec: start,
+        end_sec: end,
         binding: 'douyin_library',
+        scene_saved: false,
       },
       apply_calls: 1,
     };
