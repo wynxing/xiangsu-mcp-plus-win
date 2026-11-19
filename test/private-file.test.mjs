@@ -17,7 +17,7 @@ function simulator() {
     if (name.startsWith('whoami')) return 'TESTHOST\\onlyuser\n';
     if (name.startsWith('powershell')) {
       const script = args.at(-1);
-      const replaced = script.includes('SetAccessRuleProtection($true, $false)') && script.includes('RemoveAccessRule') && script.includes('Set-Acl');
+      const replaced = script.includes('SetAccessRuleProtection($true, $false)') && /New-Object System\.Security\.AccessControl\.(File|Directory)Security/.test(script) && script.includes('SetAccessControl') && !script.includes('Get-Acl');
       if (!replaced) return 'Everyone\tAllow\tFalse\nTESTHOST\\onlyuser\tAllow\tFalse\n';
       return 'TESTHOST\\onlyuser\tAllow\tFalse\n';
     }
@@ -54,7 +54,9 @@ test('a replaced DACL that reads back as only the current user is kept', () => {
   assert.equal(fs.existsSync(file), true);
   const script = calls.find((call) => call[0].startsWith('powershell'))[1];
   assert.match(script, /SetAccessRuleProtection\(\$true, \$false\)/);
-  assert.match(script, /RemoveAccessRule/);
+  assert.match(script, /New-Object System\.Security\.AccessControl\.FileSecurity/);
+  assert.match(script, /SetAccessControl/);
+  assert.equal(script.includes('Get-Acl'), false);
   assert.equal(calls.some((call) => call[0].startsWith('icacls')), false);
   pluginAcl.restrictPrivate(file, { platform: 'win32', execFile: exec });
   assert.equal(fs.existsSync(file), true);

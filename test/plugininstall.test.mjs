@@ -34,6 +34,7 @@ function pluginRootWithOthers() {
 
 const listed = (root) => JSON.parse(fs.readFileSync(path.join(root, 'plugins.config.json'), 'utf8')).plugins;
 const entryCode = (root, version) => fs.readFileSync(path.join(root, `XiangsuMcpPlus@${version}`, 'index.js'), 'utf8');
+const embeddedPath = (p) => JSON.stringify(p).slice(1, -1);
 
 test('a fresh install keeps other plugins and points at the package by absolute path', () => {
   const pluginRoot = pluginRootWithOthers();
@@ -56,10 +57,10 @@ test('the same or a newer install is kept, an older one is replaced, and force r
   assert.equal(ensurePlugin({ pluginRoot, pkgRoot: fakePackage('1.9.0'), stateRoot }).action, 'kept');
   const newest = fakePackage('2.0.0');
   assert.equal(ensurePlugin({ pluginRoot, pkgRoot: newest, stateRoot }).action, 'installed');
-  assert.ok(entryCode(pluginRoot, '2.0.0').includes(newest));
+  assert.ok(entryCode(pluginRoot, '2.0.0').includes(embeddedPath(newest)));
   const older = fakePackage('1.0.0');
   assert.equal(ensurePlugin({ pluginRoot, pkgRoot: older, stateRoot, force: true }).action, 'installed');
-  assert.ok(entryCode(pluginRoot, '1.0.0').includes(older));
+  assert.ok(entryCode(pluginRoot, '1.0.0').includes(embeddedPath(older)));
   assert.deepEqual(listed(pluginRoot).filter((p) => p.name === 'XiangsuMcpPlus'), [{ name: 'XiangsuMcpPlus', version: '1.0.0', loadOnStartup: true }]);
 });
 
@@ -134,7 +135,7 @@ test('replacing a plugin keeps a restorable copy of the old directory', () => {
   assert.equal(upgraded.action, 'installed');
   assert.ok(upgraded.directory_backups.length >= 1);
   const copied = fs.readFileSync(path.join(upgraded.directory_backups[0], 'index.js'), 'utf8');
-  assert.ok(copied.includes(oldPkg));
+  assert.ok(copied.includes(embeddedPath(oldPkg)));
   assert.ok(fs.existsSync(path.join(pluginRoot, 'XiangsuMcpPlus@2.0.0', 'index.js')));
 });
 

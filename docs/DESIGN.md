@@ -55,7 +55,7 @@ MCP 客户端 --stdio--> src/server.mjs
 
 探测顺序：`XIANGSU_EDITOR_EXE`、`XIANGSU_EDITOR_ROOT`、正在运行的 `Douyin AR.exe` 或 `orionkit.exe`、然后是 LocalAppData / Program Files 下的 `Douyin AR`。显式根目录不合法时不会退回到别的候选。产品资源目录是产品根下的 `Resources`。把根指到 `electron` 子目录时，若父目录才有成对的 exe 和 `Resources`，会走到父目录，避免把 Electron 自己的 `Resources` 当成编辑器资源。
 
-令牌文件：POSIX 上目录 `0700`、文件 `0600`。Windows 上用 PowerShell 关掉继承、删掉现有访问项，只留下当前 `whoami` 的 Allow，再读回 DACL。读回结果里只要还有别的身份，就删除令牌文件并停止监听。只执行 `icacls /inheritance:r /grant:r` 不够，因为它留着原来的显式 ACE。
+令牌文件：POSIX 上目录 `0700`、文件 `0600`。Windows 上新建一个空的 `FileSecurity` / `DirectorySecurity`，关掉继承，只加入当前 `whoami` 的 Allow，再用 `SetAccessControl` 写回并读出访问项。读回结果里只要还有别的身份，就删除令牌文件并停止监听。不使用 `Get-Acl` / `Set-Acl`：在部分 Windows 主机上 `Microsoft.PowerShell.Security` 模块无法自动加载。`icacls /inheritance:r /grant:r` 也不够，因为它留着原来的显式 ACE。
 
 安装：先把将要替换的插件目录整份复制到 `install-backups`，新目录在临时名称下写完并核对之后才替换。写到一半失败时，原来的 `index.js` 还在。服务启动时的自动安装走同一条路径。
 

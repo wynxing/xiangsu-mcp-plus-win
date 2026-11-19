@@ -7,6 +7,7 @@ function psQuote(value) {
 }
 
 export function windowsAclScript(target, user, isDirectory) {
+  const kind = isDirectory ? 'Directory' : 'File';
   const inheritance = isDirectory
     ? '[System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit'
     : '[System.Security.AccessControl.InheritanceFlags]::None';
@@ -14,13 +15,13 @@ export function windowsAclScript(target, user, isDirectory) {
 $ErrorActionPreference = 'Stop'
 $path = ${psQuote(target)}
 $user = ${psQuote(user)}
-$acl = Get-Acl -LiteralPath $path
-$acl.SetAccessRuleProtection($true, $false)
-foreach ($rule in @($acl.Access)) { [void]$acl.RemoveAccessRule($rule) }
+$sec = New-Object System.Security.AccessControl.${kind}Security
+$sec.SetAccessRuleProtection($true, $false)
 $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($user, 'FullControl', ${inheritance}, [System.Security.AccessControl.PropagationFlags]::None, 'Allow')
-$acl.AddAccessRule($rule)
-Set-Acl -LiteralPath $path -AclObject $acl
-(Get-Acl -LiteralPath $path).Access | ForEach-Object { '{0}\t{1}\t{2}' -f $_.IdentityReference.Value, $_.AccessControlType, $_.IsInherited }
+$sec.AddAccessRule($rule)
+[System.IO.${kind}]::SetAccessControl($path, $sec)
+$read = [System.IO.${kind}]::GetAccessControl($path)
+$read.GetAccessRules($true, $true, [System.Security.Principal.NTAccount]) | ForEach-Object { '{0}\t{1}\t{2}' -f $_.IdentityReference.Value, $_.AccessControlType, $_.IsInherited }
 `.trim();
 }
 
