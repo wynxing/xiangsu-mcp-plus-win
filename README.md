@@ -85,9 +85,17 @@ node scripts/uninstall.mjs --dry-run
 node scripts/uninstall.mjs
 ```
 
-卸载只删除 `XiangsuMcpPlus` / `XiangsuMcpExt` 的目录和配置项，不删除其他插件，也不删除 `plugins.config.json.bak-*`。
+卸载只删除 `XiangsuMcpPlus` / `XiangsuMcpExt` 的目录和配置项，不删除其他插件，也不删除备份。
 
-若要回到安装前的配置文件，把对应的 `plugins.config.json.bak-<时间>` 复制回 `plugins.config.json`。那份备份是安装前的完整内容。卸载之后编辑器里已经打开的窗口仍可能留着旧插件，关掉这些窗口即可。
+成功安装时，状态目录 `install-backups/<时间戳>-<pid>/` 里同时有两样东西：安装前的完整 `plugins.config.json`，以及被替换的插件目录（例如 `XiangsuMcpPlus@<旧版本>`）。同目录旁边的 `plugins.config.json.bak-<时间戳>` 只是配置文件的另一份副本，里面没有插件代码。只把 `.bak` 拷回去会留下新版本的代码目录，编辑器仍可能加载新代码。
+
+回到这一次安装之前：
+
+```bat
+node scripts/rollback.mjs --plugin-root "%LOCALAPPDATA%\DouyinAR\Plugins\v9.8.3\Local" --backup "%USERPROFILE%\.xiangsu-mcp-plus-win\install-backups\<时间戳>-<pid>"
+```
+
+这会按备份里的配置写回 `plugins.config.json`，把备份中的插件目录放回 `Local`，并删掉这次新装上、备份里没有的 `XiangsuMcpPlus` / `XiangsuMcpExt` 目录。其他插件的目录和配置项保持备份里的样子。备份目录本身不会被删。卸载之后，已经打开的窗口里可能还留着旧插件，关掉这些窗口即可。
 
 ## 冒烟测试（需要你自己的 Windows 和像塑）
 

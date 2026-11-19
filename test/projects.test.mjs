@@ -35,6 +35,7 @@ function world({ paths } = {}) {
     saveTimeoutMs: 50,
     platform: process.platform,
     allow: [os.tmpdir()],
+    stateRoot: tmpdir('xs-locks-'),
     listInstances: () => [...windows.keys()].map((pid) => ({ pid })),
     callPlugin: async (method, params, opts) => {
       calls.push(['plugin', method, params, opts.pid]);
@@ -241,6 +242,61 @@ test('windows unicode paths with different slashes and case select the same wind
   assert.equal(out.already_open, true);
   assert.equal(out.pid, 7);
   assert.equal(calls.some((call) => call[1] === 'project_launch'), false);
+});
+
+test('a temp window that was already registered is not the result of this project_new', async () => {
+  const { d, calls, windows } = world();
+  const oldTemp = path.join(tmpdir('xs-old-'), 'ProjectCreatedTmp', 'old');
+  const freshTemp = path.join(tmpdir('xs-new-'), 'ProjectCreatedTmp', 'fresh');
+  let oldVisible = false;
+  const baseList = d.listInstances;
+  d.listInstances = () => [...baseList(), { pid: 50 }];
+  const baseCall = d.callPlugin;
+  d.callPlugin = async (method, params, opts) => {
+    if (opts.pid === 50) {
+      if (!oldVisible) throw Error('status timeout');
+      return { projectPath: oldTemp, project_path: oldTemp, changed: false, scene_ready: true };
+    }
+    if (method === 'project_launch' && params.operation === 'createNew') {
+      oldVisible = true;
+      windows.set(201, freshTemp);
+      return {};
+    }
+    return baseCall(method, params, opts);
+  };
+  const probe = path.join(tmpdir('xs-probe-'), '空白');
+  const out = await new Projects(d).create({ path: probe });
+  const save = calls.find((call) => call[1] === 'save_project');
+  assert.equal(out.pid, 201);
+  assert.equal(save[2].instance_id, '2');
+  assert.notEqual(save[2].instance_id, '50');
+});
+
+test('two new temporary windows at once are not saved', async () => {
+  const { d, calls, windows } = world();
+  const baseCall = d.callPlugin;
+  d.callPlugin = async (method, params, opts) => {
+    if (method === 'project_launch' && params.operation === 'createNew') {
+      windows.set(201, path.join(tmpdir('xs-a-'), 'ProjectCreatedTmp', 'a'));
+      windows.set(202, path.join(tmpdir('xs-b-'), 'ProjectCreatedTmp', 'b'));
+      return {};
+    }
+    return baseCall(method, params, opts);
+  };
+  await assert.rejects(new Projects(d).create({ path: path.join(tmpdir('xs-probe-'), 'n') }), /AMBIGUOUS_NEW_WINDOW/);
+  assert.equal(calls.some((call) => call[1] === 'save_project'), false);
+});
+
+test('close refuses when the official list has no matching instance', async () => {
+  const { d, calls, windows } = world();
+  const projectPath = windows.get(100);
+  const original = d.official.callJson;
+  d.official.callJson = async (name, args) => {
+    if (name === 'list_instances') return { instances: [] };
+    return original(name, args);
+  };
+  await assert.rejects(new Projects(d).close({ project_path: projectPath, discard_changes: true }), /OFFICIAL_INSTANCE_UNCONFIRMED/);
+  assert.equal(calls.some((call) => call[1] === 'project_close'), false);
 });
 
 test('close refuses a window whose path cannot be read', async () => {

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { ensurePlugin, removePlugin } from '../src/plugininstall.mjs';
+import { ensurePlugin, removePlugin, rollbackPlugin } from '../src/plugininstall.mjs';
 import { tmpdir } from '../support/tmp.mjs';
 
 const require = createRequire(import.meta.url);
@@ -137,6 +137,27 @@ test('replacing a plugin keeps a restorable copy of the old directory', () => {
   const copied = fs.readFileSync(path.join(upgraded.directory_backups[0], 'index.js'), 'utf8');
   assert.ok(copied.includes(embeddedPath(oldPkg)));
   assert.ok(fs.existsSync(path.join(pluginRoot, 'XiangsuMcpPlus@2.0.0', 'index.js')));
+});
+
+test('rollback restores the previous plugin directory and config without dropping other plugins', () => {
+  const pluginRoot = pluginRootWithOthers();
+  const stateRoot = tmpdir('xs-st-');
+  const oldPkg = fakePackage('1.0.0');
+  ensurePlugin({ pluginRoot, pkgRoot: oldPkg, stateRoot });
+  const upgraded = ensurePlugin({ pluginRoot, pkgRoot: fakePackage('2.0.0'), stateRoot });
+  const otherFile = path.join(pluginRoot, 'Other@1.0.0', 'keep.txt');
+  fs.mkdirSync(path.dirname(otherFile), { recursive: true });
+  fs.writeFileSync(otherFile, 'other');
+  const result = rollbackPlugin({ pluginRoot, backupDir: upgraded.backup.dir });
+  assert.equal(result.action, 'rolled-back');
+  assert.ok(fs.existsSync(path.join(pluginRoot, 'XiangsuMcpPlus@1.0.0', 'index.js')));
+  assert.equal(fs.existsSync(path.join(pluginRoot, 'XiangsuMcpPlus@2.0.0')), false);
+  assert.ok(fs.readFileSync(path.join(pluginRoot, 'XiangsuMcpPlus@1.0.0', 'index.js'), 'utf8').includes(embeddedPath(oldPkg)));
+  assert.deepEqual(listed(pluginRoot).map((p) => p.name), ['Other', 'CodexXiangsuMCP', 'XiangsuMcpPlus']);
+  assert.equal(listed(pluginRoot).find((p) => p.name === 'XiangsuMcpPlus').version, '1.0.0');
+  assert.equal(fs.readFileSync(otherFile, 'utf8'), 'other');
+  assert.ok(fs.existsSync(path.join(upgraded.backup.dir, 'plugins.config.json')));
+  assert.ok(fs.existsSync(path.join(upgraded.backup.dir, 'XiangsuMcpPlus@1.0.0', 'index.js')));
 });
 
 test('dry-run does not write the plugin', () => {

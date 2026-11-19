@@ -14,12 +14,12 @@ function simulator() {
   const exec = (file, args) => {
     calls.push([path.basename(file).toLowerCase(), args.join(' ')]);
     const name = path.basename(file).toLowerCase();
-    if (name.startsWith('whoami')) return 'TESTHOST\\onlyuser\n';
+    if (name.startsWith('whoami')) return '"TESTHOST\\onlyuser","S-1-5-21-1"\n';
     if (name.startsWith('powershell')) {
       const script = args.at(-1);
       const replaced = script.includes('SetAccessRuleProtection($true, $false)') && /New-Object System\.Security\.AccessControl\.(File|Directory)Security/.test(script) && script.includes('SetAccessControl') && !script.includes('Get-Acl');
-      if (!replaced) return 'Everyone\tAllow\tFalse\nTESTHOST\\onlyuser\tAllow\tFalse\n';
-      return 'TESTHOST\\onlyuser\tAllow\tFalse\n';
+      if (!replaced) return 'S-1-1-0\tAllow\tFalse\nS-1-5-21-1\tAllow\tFalse\n';
+      return 'S-1-5-21-1\tAllow\tFalse\n';
     }
     if (name.startsWith('icacls')) return 'Everyone:(F)\nTESTHOST\\onlyuser:(F)\n';
     throw Error(`unexpected ${file}`);
@@ -30,7 +30,7 @@ function simulator() {
 test('directory ACL script grants the user without using -bor inside New-Object', () => {
   const script = windowsAclScript('C:\\instances', 'HOST\\user', true);
   assert.match(script, /DirectorySecurity/);
-  assert.match(script, /FileSystemAccessRule\(\$user, 2032127, 3, 0, 0\)/);
+  assert.match(script, /FileSystemAccessRule\(\$sid, 2032127, 3, 0, 0\)/);
   assert.equal(script.includes('-bor'), false);
   assert.equal(pluginAcl.windowsAclScript('C:\\instances', 'HOST\\user', true), script);
 });
@@ -43,11 +43,11 @@ test('a DACL that still grants Everyone is rejected and the token file is remove
     const real = exec;
     const execFile = (file, args, opts) => {
       if (path.basename(file).toLowerCase().startsWith('powershell')) {
-        return 'Everyone\tAllow\tFalse\nTESTHOST\\onlyuser\tAllow\tFalse\n';
+        return 'S-1-1-0\tAllow\tFalse\nS-1-5-21-1\tAllow\tFalse\n';
       }
       return real(file, args, opts);
     };
-    assert.throws(() => apply(file, { platform: 'win32', execFile }), /ACL_NOT_PRIVATE: Everyone/);
+    assert.throws(() => apply(file, { platform: 'win32', execFile }), /ACL_NOT_PRIVATE: S-1-1-0/);
     assert.equal(fs.existsSync(file), false);
     assert.equal(calls.some((call) => call[0].startsWith('icacls')), false);
   }
@@ -63,7 +63,7 @@ test('a replaced DACL that reads back as only the current user is kept', () => {
   const script = calls.find((call) => call[0].startsWith('powershell'))[1];
   assert.match(script, /SetAccessRuleProtection\(\$true, \$false\)/);
   assert.match(script, /New-Object System\.Security\.AccessControl\.FileSecurity/);
-  assert.match(script, /FileSystemAccessRule\(\$user, 2032127, 0, 0, 0\)/);
+  assert.match(script, /FileSystemAccessRule\(\$sid, 2032127, 0, 0, 0\)/);
   assert.match(script, /SetAccessControl/);
   assert.equal(script.includes('-bor'), false);
   assert.equal(script.includes('Get-Acl'), false);

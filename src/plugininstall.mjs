@@ -242,6 +242,32 @@ export function removePlugin({ pluginRoot, stateRoot = stateRootOf(), dryRun = f
   return { action: 'removed', removed, kept, plugin_root: pluginRoot };
 }
 
+export function rollbackPlugin({ pluginRoot, backupDir } = {}) {
+  if (!pluginRoot || !backupDir) throw Error('ROLLBACK_UNSET');
+  const configBackup = path.join(backupDir, 'plugins.config.json');
+  if (!fs.existsSync(configBackup)) throw Error(`ROLLBACK_BACKUP_MISSING: ${configBackup}`);
+  const raw = fs.readFileSync(configBackup, 'utf8');
+  const list = JSON.parse(raw);
+  if (!list || !Array.isArray(list.plugins)) throw Error(`ROLLBACK_BACKUP_INVALID: ${configBackup}`);
+  const restored = fs.readdirSync(backupDir).filter((name) => {
+    const full = path.join(backupDir, name);
+    return name !== 'plugins.config.json' && fs.statSync(full).isDirectory();
+  });
+  for (const name of restored) {
+    const dest = path.join(pluginRoot, name);
+    fs.rmSync(dest, { recursive: true, force: true });
+    fs.cpSync(path.join(backupDir, name), dest, { recursive: true });
+  }
+  for (const name of ownFolders(pluginRoot)) {
+    if (!restored.includes(name)) fs.rmSync(path.join(pluginRoot, name), { recursive: true, force: true });
+  }
+  const listPath = path.join(pluginRoot, 'plugins.config.json');
+  const tmp = `${listPath}.rollback-${process.pid}`;
+  fs.writeFileSync(tmp, raw);
+  fs.renameSync(tmp, listPath);
+  return { action: 'rolled-back', plugin_root: pluginRoot, backup_dir: backupDir, restored };
+}
+
 export function installFromEnvironment({ env = process.env, force = false, dryRun = false, discover = discoverEditor } = {}) {
   const pluginRoot = env.XIANGSU_PLUGIN_ROOT;
   if (pluginRoot) return ensurePlugin({ pluginRoot, stateRoot: stateRootOf(env), force, dryRun });

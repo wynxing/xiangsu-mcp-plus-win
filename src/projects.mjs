@@ -10,6 +10,8 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { KeyedMutex } from './mutex.mjs';
 import { normalizePath, pathApi, pathInside, samePath } from './paths.mjs';
+import { stateRootOf } from './plugininstall.mjs';
+import { claimTarget, releaseTarget } from './target-lock.mjs';
 
 export const MAX_WINDOWS = 2;
 export const COLD_START = Object.freeze({
@@ -233,7 +235,12 @@ export class Projects {
   async create({ path: target }) {
     const abs = this.normalize(target);
     this.assertMutable(abs);
-    return this.locks.run(this.targetKey(abs), () => this.createHoldingTarget(abs));
+    const claim = claimTarget(abs, { stateRoot: this.d.stateRoot || stateRootOf(this.d.env), isPidAlive: this.d.isPidAlive });
+    try {
+      return await this.locks.run(this.targetKey(abs), () => this.createHoldingTarget(abs));
+    } finally {
+      releaseTarget(claim);
+    }
   }
 
   async createHoldingTarget(abs) {
@@ -250,13 +257,26 @@ export class Projects {
   async createLocked(abs, pid, launcherPath) {
     const windows = await this.windows();
     if (windows.length >= MAX_WINDOWS) throw Error(`WINDOW_LIMIT: all ${MAX_WINDOWS} project windows are in use; project_close one first`);
-    const seen = new Set(windows.map((w) => `${w.pid}|${w.project_path}`));
-    await this.launch(pid, { operation: 'createNew' });
+    const beforePids = new Set(this.d.listInstances().map((record) => record.pid));
+    const launched = await this.launch(pid, { operation: 'createNew' });
+    const wantedPid = Number(launched?.created_pid);
     const created = await waitFor(
-      async () => (await this.windows()).find((w) => !seen.has(`${w.pid}|${w.project_path}`) && isTempProject(w.project_path)),
+      async () => {
+        const fresh = (await this.windows()).filter((w) => isTempProject(w.project_path) && !beforePids.has(w.pid));
+        if (Number.isInteger(wantedPid) && wantedPid > 0) {
+          if (beforePids.has(wantedPid)) return { ambiguous: true };
+          const hit = fresh.filter((w) => w.pid === wantedPid);
+          if (hit.length === 1) return hit[0];
+          if (fresh.length > 1) return { ambiguous: true };
+          return null;
+        }
+        if (fresh.length > 1) return { ambiguous: true };
+        return fresh.length === 1 ? fresh[0] : null;
+      },
       { timeoutMs: this.d.openTimeoutMs, sleep: this.d.sleep },
     );
-    if (!created) throw Error('NEW_PROJECT_TIMEOUT: no new project window appeared');
+    if (!created) throw Error('NEW_PROJECT_TIMEOUT: no new project window appeared; save_project was not called');
+    if (created.ambiguous) throw Error('AMBIGUOUS_NEW_WINDOW: more than one new temporary project appeared; save_project was not called');
     await this.waitReady(created.pid);
     const official = (await this.officialInstances()).find((instance) => instance.pid === created.pid);
     if (!official?.project_path || !this.same(official.project_path, created.project_path)) {
@@ -307,8 +327,11 @@ export class Projects {
       throw Error(`OFFICIAL_PATH_UNCONFIRMED: ${e.message}; refusing to close`);
     }
     const official = instances.find((instance) => instance.pid === hit.pid);
-    if (!hit.project_path || (official?.project_path && !this.same(hit.project_path, official.project_path))) {
-      throw Error(`PROJECT_PATH_UNREADABLE: refusing to close pid ${hit.pid}; plugin path ${hit.project_path ?? 'missing'}, official path ${official?.project_path ?? 'missing'}`);
+    if (!hit.project_path) {
+      throw Error(`PROJECT_PATH_UNREADABLE: refusing to close pid ${hit.pid}; plugin path is missing`);
+    }
+    if (!official?.project_path || !this.same(hit.project_path, official.project_path)) {
+      throw Error(`OFFICIAL_INSTANCE_UNCONFIRMED: refusing to close pid ${hit.pid}; plugin path ${hit.project_path}, official path ${official?.project_path ?? 'missing'}`);
     }
     if (official?.project_path) this.assertMutable(official.project_path);
     this.assertMutable(hit.project_path);

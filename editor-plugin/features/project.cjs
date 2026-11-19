@@ -42,7 +42,9 @@ const methods = {
       .EditSender.getInstance()
       .sendCmdWithResponse(new OpenProjectFromEditCommand(operation, withPath ? projectPath : undefined, { enter_method: 'xiangsu_mcp_plus_win' }));
     const status = res && res.status;
-    if (status === 'succeeded') return { requested: operation, path: withPath ? projectPath : null };
+    const reported = Number(res && (res.pid ?? res.processId));
+    const created_pid = Number.isInteger(reported) && reported > 0 ? reported : null;
+    if (status === 'succeeded') return { requested: operation, path: withPath ? projectPath : null, created_pid };
     if (status === 'reuseCurrent') throw Error(`WINDOW_LIMIT: all ${res.processCount} project windows are in use; close one with project_close first`);
     if (status === 'cancelled' && res.reason === 'duplicateProject') throw Error(`PROJECT_ALREADY_OPEN: ${projectPath} is open in another window`);
     if (status === 'cancelled' || status === 'failed') throw Error(`LAUNCH_${String(status).toUpperCase()}: ${JSON.stringify(res)}`);

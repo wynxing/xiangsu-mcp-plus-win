@@ -43,7 +43,11 @@ MCP 客户端 --stdio--> src/server.mjs
 - 多个窗口时必须给出 `project_path` 或 `instance_id`。路径比较在 Windows 上忽略大小写和斜杠，并做 NFC。
 - 生命周期变更使用白名单。`XIANGSU_ALLOW_PROJECTS` 或未跟踪的 `config.local.json`（`allowProjects`）列出允许的根目录；不在名单里的路径返回 `PROJECT_NOT_ALLOWLISTED`。`XIANGSU_DENY_PROJECTS` / `denyProjects` 优先，返回 `PROTECTED_PROJECT`。仓库不写具体工程名。
 - 关窗时插件路径必须能读到，并且和官方 `list_instances` 里同一 pid 的路径一致。读不到、对不上，或官方列表读失败，都不调用 `project_close`。
-- `project_new` 按目标路径加锁。空目录检查在锁内做两次，后一次紧挨着 `save_project`。官方实例的 `project_path` 必须等于插件上报的 `ProjectCreatedTmp` 路径，两者都不在黑名单里。发起新建的窗口必须仍显示原来的已允许工程。任何一条不成立都不调用 `save_project`。
+- `project_new` 先在状态目录里用独占创建占用目标路径的锁文件，进程退出或锁文件里的 pid 已死才能接手；活着的 pid 不会被抢走。这个锁不在用户工程目录里，释放或替换过期锁不会删除目标目录。同一进程里还有一把内存锁。空目录检查在两把锁之内做，后一次紧挨着 `save_project`。
+
+新建窗口必须是本次 `project_launch` 之后新出现的 pid。启动前已经登记过的实例，即使当时没有答上 `status`、之后才报出 `ProjectCreatedTmp`，也不是这次新建的结果。同时出现两个新的临时窗口，或者编辑器明确返回的 pid 对不上，返回 `AMBIGUOUS_NEW_WINDOW`，不调用 `save_project`。官方实例的 `project_path` 必须等于插件上报的临时路径，两者都不在黑名单里。发起新建的窗口必须仍显示原来的已允许工程。
+
+关闭要求官方 `list_instances` 里存在同一个 pid，且路径与插件路径一致。官方列表是空的、没有这个 pid，或路径不一致，都是 `OFFICIAL_INSTANCE_UNCONFIRMED`，不调用 `project_close`。
 
 `self_check` 强制的只有 `project`：`Project.unload`、`ProjectManager.getInstance`、分析插件的 `flush` / `safelyExitApplication`、`OpenProjectFromEditCommand`、`EditSender.getInstance`、`SceneModule.getEditingSceneService`。缺任何一项，工具抛 `INCOMPATIBLE_EDITOR`。`quietWindows`、`music`、`icon` 只出现在诊断里。编辑器升级后要重跑 `ext_status`。
 
@@ -55,7 +59,7 @@ MCP 客户端 --stdio--> src/server.mjs
 
 探测顺序：`XIANGSU_EDITOR_EXE`、`XIANGSU_EDITOR_ROOT`、正在运行的 `Douyin AR.exe` 或 `orionkit.exe`、然后是 LocalAppData / Program Files 下的 `Douyin AR`。显式根目录不合法时不会退回到别的候选。产品资源目录是产品根下的 `Resources`。把根指到 `electron` 子目录时，若父目录才有成对的 exe 和 `Resources`，会走到父目录，避免把 Electron 自己的 `Resources` 当成编辑器资源。
 
-令牌文件：POSIX 上目录 `0700`、文件 `0600`。Windows 上新建一个空的 `FileSecurity` / `DirectorySecurity`，关掉继承，只加入当前 `whoami` 的 Allow，再用 `SetAccessControl` 写回并读出访问项。读回结果里只要还有别的身份，就删除令牌文件并停止监听。不使用 `Get-Acl` / `Set-Acl`：在部分 Windows 主机上 `Microsoft.PowerShell.Security` 模块无法自动加载。`icacls /inheritance:r /grant:r` 也不够，因为它留着原来的显式 ACE。
+令牌文件：POSIX 上目录 `0700`、文件 `0600`。Windows 上用当前用户的 SID 新建空的 `FileSecurity` / `DirectorySecurity`，关掉继承，只加入这一条 Allow，再用 `SetAccessControl` 写回。读回使用 `SecurityIdentifier`，只含 ASCII 的 SID，避免显示名编码。`execFile` 取原始字节：有 UTF-16 BOM 或奇数位大量 NUL 时按 UTF-16LE 解码，否则按 UTF-8。`11f7ca3` 的 Windows CI 里，运行时测试用 UTF-8 解码真实 `powershell.exe` 输出并和 `whoami` 对上了，所以那次调用的默认输出不是 UTF-16LE；字节探针写在 `test-results/windows-acl-evidence.json`，由 CI 上传。读回结果里只要还有别的 SID，就删除令牌文件并停止监听。
 
 安装：先把将要替换的插件目录整份复制到 `install-backups`，新目录在临时名称下写完并核对之后才替换。写到一半失败时，原来的 `index.js` 还在。服务启动时的自动安装走同一条路径。
 
