@@ -254,6 +254,14 @@ test('music_apply does not bind when the window has no active project', async ()
   assert.equal(calls.some((call) => Array.isArray(call) && call[0] === 'set'), false);
 });
 
+async function waitUntil(fn) {
+  const deadline = Date.now() + 2000;
+  while (!fn()) {
+    if (Date.now() >= deadline) throw Error('timed out waiting for music_apply RPC');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 test('music_apply RPC on one window does not overlap', async () => {
   process.env.XIANGSU_MCP_PLUS_STATE = tmpdir('xs-music-rt-');
   const { Runtime } = require('../editor-plugin/runtime.cjs');
@@ -261,10 +269,12 @@ test('music_apply RPC on one window does not overlap', async () => {
   const port = await rt.start();
   let current = 0;
   let max = 0;
-  let release;
+  let ended = 0;
+  let release = () => {};
   const gate = new Promise((resolve) => {
     release = resolve;
   });
+  rt.server.on('request', (req) => req.on('end', () => { ended += 1; }));
   rt.library.musicApply = async () => {
     current += 1;
     max = Math.max(max, current);
@@ -275,19 +285,24 @@ test('music_apply RPC on one window does not overlap', async () => {
   const call = () =>
     fetch(`http://127.0.0.1:${port}/rpc`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${rt.token}`, 'content-type': 'application/json' },
+      headers: { authorization: `Bearer ${rt.token}`, 'content-type': 'application/json', connection: 'close' },
       body: JSON.stringify({ method: 'music_apply', params: { music_id: 'm1' } }),
     });
   const first = call();
   const second = call();
   try {
-    await new Promise((resolve) => setTimeout(resolve, 40));
+    await waitUntil(() => ended >= 2 && current >= 1);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(current, 1);
     assert.equal(max, 1);
     release();
     const bodies = await Promise.all([first, second]);
     assert.equal((await bodies[0].json()).ok, true);
+    assert.equal((await bodies[1].json()).ok, true);
+    assert.equal(max, 1);
   } finally {
     release();
+    await Promise.allSettled([first, second]);
     rt.stop();
   }
 });
