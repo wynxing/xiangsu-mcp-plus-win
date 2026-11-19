@@ -11,7 +11,9 @@ fs.mkdirSync(dest, { recursive: true });
 for (const name of fs.readdirSync(dest)) {
   if (name.endsWith('.tgz') || name.endsWith('.sha256')) fs.rmSync(path.join(dest, name));
 }
-execFileSync('npm', ['pack', '--pack-destination', dest], { cwd: root, stdio: 'inherit' });
+const npmCli = process.env.npm_execpath;
+if (npmCli) execFileSync(process.execPath, [npmCli, 'pack', '--pack-destination', dest], { cwd: root, stdio: 'inherit' });
+else execFileSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['pack', '--pack-destination', dest], { cwd: root, stdio: 'inherit', shell: process.platform === 'win32' });
 for (const name of fs.readdirSync(dest).filter((file) => file.endsWith('.tgz'))) {
   const body = fs.readFileSync(path.join(dest, name));
   const digest = crypto.createHash('sha256').update(body).digest('hex');
