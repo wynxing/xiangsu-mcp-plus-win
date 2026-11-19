@@ -42,7 +42,8 @@ MIT。版权与归属见 [LICENSE](LICENSE) 和 [NOTICE](NOTICE)。
 | `XIANGSU_LOCALAPPDATA` | 覆盖 `LOCALAPPDATA`。 |
 | `XIANGSU_MCP_URL` | 官方 MCP 地址。 |
 | `XIANGSU_MCP_PLUS_STATE` | 状态目录。默认是用户主目录下的 `.xiangsu-mcp-plus-win`。 |
-| `XIANGSU_DENY_PROJECTS` | 可选。用 `|` 隔开的绝对路径。这些目录及其子目录不能被打开、新建或关闭。 |
+| `XIANGSU_ALLOW_PROJECTS` | 生命周期白名单，用 `|` 隔开的绝对路径。未列入的工程不能被打开、新建或关闭。也可以写在未纳入版本库的 `config.local.json` 的 `allowProjects` 数组里。 |
+| `XIANGSU_DENY_PROJECTS` | 黑名单，同样用 `|` 分隔，或写在 `config.local.json` 的 `denyProjects`。命中的目录优先于白名单。 |
 
 未设置根目录时，只在运行中的 `Douyin AR.exe` / `orionkit.exe`，以及 `%LOCALAPPDATA%\Douyin AR`、`Program Files\Douyin AR` 里查找。
 
@@ -64,10 +65,12 @@ node scripts/install.mjs --dry-run
 
 安装会：
 
-1. 若已有 `plugins.config.json`，先原样备份到同目录的 `plugins.config.json.bak-<时间>`，并再复制一份到状态目录的 `install-backups`。
-2. 只替换名为 `XiangsuMcpPlus` 或旧名 `XiangsuMcpExt` 的条目和文件夹。
+1. 先把现有 `plugins.config.json` 和将要换掉的 `XiangsuMcpPlus` / `XiangsuMcpExt` 目录复制到 `install-backups`。配置文件旁边也会留一份 `plugins.config.json.bak-<时间>`。
+2. 新插件先写到临时目录并核对 `index.js`、清单和标记都在，再替换旧目录。写入失败时旧目录还在。
 3. 其他插件原样保留。
 4. 生成的 `index.js` 用绝对路径加载 `runtime.cjs`，避免 npx 缓存目录变化后插件找不到代码。
+
+令牌文件在 Windows 上会换成只含当前用户的 DACL，并读回来核对。核对失败就删掉令牌文件并停止监听。POSIX 上目录是 `0700`，文件是 `0600`。
 
 同一版本且代码还在时，再次安装结果是 `kept`。`--force` 会重装。
 
@@ -91,13 +94,13 @@ node scripts/uninstall.mjs
 下面的步骤**不是**本仓库已经完成的验收。合同测试全是模拟。真正点进 9.8.3 之前，先看 `ext_status`。
 
 1. 准备一个新建的空目录，名字类似 `_mcp_win_probe-<时间>`。不要用不能丢弃的工程，也不要把它放进那些工程里面。
-2. 可以设置 `XIANGSU_DENY_PROJECTS`，把不能碰的工程目录加进去。
+2. 把一次性目录和用来发起操作的那个已打开工程都放进 `XIANGSU_ALLOW_PROJECTS`。不在名单里的路径会被拒绝。不能碰的目录放进 `XIANGSU_DENY_PROJECTS`。不要把这些路径写进仓库。
 3. 安装插件后，手工打开一个可丢弃的工程窗口，让插件加载。像塑同时大约只能开两个工程窗口。
 4. 调用 `ext_status`。确认 `plugin_install.action` 不是 `failed`，官方 `connected` 为真，测试窗口的 `self_check.features.project` 为真。若为假，列出的 `missing` 就是当前编辑器缺少的内部模块，停在这里，不要继续开关窗口。
 5. 用官方 `list_instances` 只读核对测试窗口。官方工具由本服务转发，断线后不会自动再发。
-6. `project_close` 只关测试窗口。不传 `discard_changes` 时，有未保存修改会拒绝；读不到脏状态也会拒绝。确认别的窗口还在。
+6. `project_close` 只关测试窗口。读不到工程路径、路径和官方实例不一致、或不能证明没有未保存修改时都会拒绝。关窗前会再读一次脏状态；这 300 毫秒里变成了脏且没有 `discard_changes`，进程不会退出。确认别的窗口还在。
 7. `project_open` 再打开测试工程目录（里面要有 `effect.dyehpj`）。已经打开时会原样返回。
-8. `project_new` 指到一个还不存在的空目录。它会先让编辑器新建窗口，再调用官方 `save_project` 一次。目标里已有文件会拒绝，并且不会调用保存。
+8. `project_new` 指到一个还不存在、且在白名单里的空目录。保存前会再确认目录仍是空的，并要求官方实例路径和插件里的临时工程路径一致、都不在黑名单里，而且用来新建的那个窗口还停在原来的工程上。对不上就不会调用 `save_project`。
 9. 关掉新建窗口，删掉临时目录。不要点提交审核，不要勾选协议。
 
 没有工程窗口时，`project_open` 应返回 `NO_EDITOR_WINDOW` 和 `WINDOWS_COLD_START_UNVERIFIED`，并且不会启动编辑器。

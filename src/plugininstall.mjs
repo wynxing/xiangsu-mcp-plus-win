@@ -80,14 +80,20 @@ module.exports = class {
 `;
 }
 
-function backupConfig(listPath, stateRoot, raw) {
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+function backupConfig(listPath, stateRoot, raw, stamp) {
   const beside = `${listPath}.bak-${stamp}`;
   fs.copyFileSync(listPath, beside);
   const dir = path.join(stateRoot, 'install-backups', stamp);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'plugins.config.json'), raw);
   return { beside, dir };
+}
+
+function backupDirectory(src, stateRoot, stamp) {
+  const dest = path.join(stateRoot, 'install-backups', stamp, path.basename(src));
+  fs.cpSync(src, dest, { recursive: true });
+  if (fs.existsSync(path.join(src, 'index.js')) && !fs.existsSync(path.join(dest, 'index.js'))) throw Error(`INSTALL_BACKUP_FAILED: ${src}`);
+  return dest;
 }
 
 function ownFolders(pluginRoot) {
@@ -103,6 +109,7 @@ export function ensurePlugin({
   force = false,
   dryRun = false,
   manifestVersion = null,
+  writeFileSync = fs.writeFileSync,
 } = {}) {
   const pkg = readJson(path.join(pkgRoot, 'package.json'));
   const version = pkg.version;
@@ -141,36 +148,72 @@ export function ensurePlugin({
     preserved: (list.plugins || []).filter((p) => !LEGACY_NAMES.has(p.name)).map((p) => p.name),
   };
   if (dryRun) return { ...plan, action: 'dry-run' };
+  const stamp = `${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}`;
   let backup = null;
-  if (raw != null) backup = backupConfig(listPath, stateRoot, raw);
-  for (const entry of removed) fs.rmSync(path.join(pluginRoot, entry), { recursive: true, force: true });
+  const directoryBackups = [];
+  if (raw != null) backup = backupConfig(listPath, stateRoot, raw, stamp);
+  for (const entry of removed) directoryBackups.push(backupDirectory(path.join(pluginRoot, entry), stateRoot, stamp));
   const dest = plan.plugin;
-  fs.mkdirSync(dest, { recursive: true });
-  fs.writeFileSync(path.join(dest, 'index.js'), entrySource(runtimeFile));
-  fs.writeFileSync(
-    path.join(dest, 'plugin.manifest.json'),
-    JSON.stringify(
-      {
-        name: PLUGIN_NAME,
-        version: folderVersion,
-        description: 'Local RPC bridge for xiangsu-mcp-plus-win (unofficial)',
-        requirements: { orionSDK: '', apis: {} },
-        entry: 'index.js',
-        builderVersion: 1,
-      },
-      null,
-      2,
-    ),
-  );
-  fs.writeFileSync(path.join(dest, MARKER), JSON.stringify({ package: pkg.name, version, code }, null, 2));
-  const next = {
-    ...list,
-    plugins: (list.plugins || []).filter((p) => !LEGACY_NAMES.has(p.name)).concat([{ name: PLUGIN_NAME, version: folderVersion, loadOnStartup: true }]),
+  const staging = path.join(pluginRoot, `.${PLUGIN_NAME}@${folderVersion}.staging-${process.pid}`);
+  const configTmp = `${listPath}.tmp-${process.pid}`;
+  const aside = (entry) => path.join(pluginRoot, `.${entry}.aside-${process.pid}`);
+  const restoreAside = () => {
+    for (const entry of removed) {
+      const held = aside(entry);
+      const original = path.join(pluginRoot, entry);
+      if (fs.existsSync(held) && !fs.existsSync(original)) fs.renameSync(held, original);
+    }
   };
-  const tmp = `${listPath}.tmp-${process.pid}`;
-  fs.writeFileSync(tmp, JSON.stringify(next, null, 2));
-  fs.renameSync(tmp, listPath);
-  return { ...plan, backup };
+  try {
+    fs.rmSync(staging, { recursive: true, force: true });
+    fs.mkdirSync(staging, { recursive: true });
+    const files = {
+      'index.js': entrySource(runtimeFile),
+      'plugin.manifest.json': JSON.stringify(
+        {
+          name: PLUGIN_NAME,
+          version: folderVersion,
+          description: 'Local RPC bridge for xiangsu-mcp-plus-win (unofficial)',
+          requirements: { orionSDK: '', apis: {} },
+          entry: 'index.js',
+          builderVersion: 1,
+        },
+        null,
+        2,
+      ),
+      [MARKER]: JSON.stringify({ package: pkg.name, version, code }, null, 2),
+    };
+    for (const [name, contents] of Object.entries(files)) writeFileSync(path.join(staging, name), contents);
+    for (const name of Object.keys(files)) {
+      if (!fs.existsSync(path.join(staging, name))) throw Error(`INSTALL_STAGE_INCOMPLETE: ${name}`);
+    }
+    if (!fs.readFileSync(path.join(staging, 'index.js'), 'utf8').includes(JSON.stringify(runtimeFile))) throw Error('INSTALL_STAGE_INCOMPLETE: index');
+    const next = {
+      ...list,
+      plugins: (list.plugins || []).filter((p) => !LEGACY_NAMES.has(p.name)).concat([{ name: PLUGIN_NAME, version: folderVersion, loadOnStartup: true }]),
+    };
+    writeFileSync(configTmp, JSON.stringify(next, null, 2));
+    const stagedList = JSON.parse(fs.readFileSync(configTmp, 'utf8'));
+    if (!stagedList.plugins.some((p) => p.name === PLUGIN_NAME && p.version === folderVersion)) throw Error('INSTALL_STAGE_INCOMPLETE: config');
+    for (const entry of removed) fs.renameSync(path.join(pluginRoot, entry), aside(entry));
+    if (fs.existsSync(dest)) fs.renameSync(dest, aside(path.basename(dest)));
+    fs.renameSync(staging, dest);
+    fs.renameSync(configTmp, listPath);
+    for (const entry of removed) fs.rmSync(aside(entry), { recursive: true, force: true });
+    if (path.basename(dest) !== removed.find((entry) => entry === path.basename(dest))) {
+      const heldDest = aside(path.basename(dest));
+      if (fs.existsSync(heldDest)) fs.rmSync(heldDest, { recursive: true, force: true });
+    }
+  } catch (e) {
+    fs.rmSync(staging, { recursive: true, force: true });
+    fs.rmSync(configTmp, { force: true });
+    if (fs.existsSync(dest) && fs.existsSync(aside(path.basename(dest)))) fs.rmSync(dest, { recursive: true, force: true });
+    restoreAside();
+    const heldDest = aside(path.basename(dest));
+    if (fs.existsSync(heldDest) && !fs.existsSync(dest)) fs.renameSync(heldDest, dest);
+    throw e;
+  }
+  return { ...plan, backup, directory_backups: directoryBackups };
 }
 
 export function removePlugin({ pluginRoot, stateRoot = stateRootOf(), dryRun = false } = {}) {
@@ -185,12 +228,14 @@ export function removePlugin({ pluginRoot, stateRoot = stateRootOf(), dryRun = f
     if (!list || !Array.isArray(list.plugins)) throw Error(`PLUGIN_CONFIG_INVALID: ${listPath}; not modified`);
     kept = list.plugins.filter((p) => !LEGACY_NAMES.has(p.name));
     if (dryRun) return { action: 'dry-run', removed, kept: kept.map((p) => p.name), plugin_root: pluginRoot };
-    const backup = backupConfig(listPath, stateRoot, raw);
+    const stamp = `${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}`;
+    const backup = backupConfig(listPath, stateRoot, raw, stamp);
+    const directoryBackups = removed.map((entry) => backupDirectory(path.join(pluginRoot, entry), stateRoot, stamp));
     for (const entry of removed) fs.rmSync(path.join(pluginRoot, entry), { recursive: true, force: true });
     const tmp = `${listPath}.tmp-${process.pid}`;
     fs.writeFileSync(tmp, JSON.stringify({ ...list, plugins: kept }, null, 2));
     fs.renameSync(tmp, listPath);
-    return { action: 'removed', removed, kept: kept.map((p) => p.name), plugin_root: pluginRoot, backup };
+    return { action: 'removed', removed, kept: kept.map((p) => p.name), plugin_root: pluginRoot, backup, directory_backups: directoryBackups };
   }
   if (dryRun) return { action: 'dry-run', removed, kept, plugin_root: pluginRoot };
   for (const entry of removed) fs.rmSync(path.join(pluginRoot, entry), { recursive: true, force: true });

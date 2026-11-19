@@ -13,7 +13,7 @@ const methods = {
   projectState() {
     const EF = this.mod(M.ef);
     const pm = EF.ProjectManager.getInstance();
-    if (!pm.hasActiveProject()) return { project_path: null, changed: false, scene_ready: false };
+    if (!pm.hasActiveProject()) throw Error('UNKNOWN_DIRTY_STATE: no active project; unsaved state cannot be proven clean');
     const project = pm.getCurrentActiveProject();
     let sceneReady = false;
     try {
@@ -22,9 +22,11 @@ const methods = {
     } catch (e) {
       throw Error(`UNKNOWN_DIRTY_STATE: scene module unreadable (${e.message})`);
     }
-    const changed = typeof project.isProjectChanged === 'function' ? project.isProjectChanged() : null;
+    if (!project || typeof project.isProjectChanged !== 'function') throw Error('UNKNOWN_DIRTY_STATE: isProjectChanged is unavailable');
+    const changed = project.isProjectChanged();
     if (changed !== true && changed !== false) throw Error('UNKNOWN_DIRTY_STATE: isProjectChanged did not return a boolean');
-    return { project_path: project.path || null, changed: !!changed, scene_ready: sceneReady };
+    if (!project.path) throw Error('UNKNOWN_DIRTY_STATE: project path cannot be read');
+    return { project_path: project.path, changed, scene_ready: sceneReady };
   },
 
   async projectLaunch({ operation, path: projectPath }) {
@@ -50,15 +52,24 @@ const methods = {
   projectClose({ discard_changes = false } = {}) {
     this.ensureCompatible('project');
     const state = this.projectState();
-    if (state.changed && !discard_changes) throw Error(`PROJECT_HAS_UNSAVED_CHANGES: ${state.project_path}; save it first or pass discard_changes`);
+    if (state.changed !== false && !discard_changes) {
+      if (state.changed === true) throw Error(`PROJECT_HAS_UNSAVED_CHANGES: ${state.project_path}; save it first or pass discard_changes`);
+      throw Error('UNKNOWN_DIRTY_STATE: unsaved state is not proven clean');
+    }
     const { Project } = this.mod(M.ef);
     const analytics = this.mod(M.analytics).AnalyticsBusinessPlugin.instance;
     this.schedule(() => {
       return (async () => {
+        const again = this.projectState();
+        if (again.changed !== false && !discard_changes) {
+          throw Error(again.changed === true ? `PROJECT_HAS_UNSAVED_CHANGES: ${again.project_path}; not exiting` : 'UNKNOWN_DIRTY_STATE: not exiting');
+        }
         await Project.unload();
         await analytics.flush();
         analytics.safelyExitApplication('no_save_exit');
-      })().catch(() => {});
+      })().catch(() => {
+        // A failed re-check or unload must leave the process running. Do not exit from this catch.
+      });
     }, CLOSE_DELAY_MS);
     return { closing: true, project_path: state.project_path, discarded_changes: state.changed === true && !!discard_changes };
   },

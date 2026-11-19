@@ -8,6 +8,7 @@ const { M } = require('./common.cjs');
 const REQUIRED = {
   project: [
     [M.ef, 'Project.unload'],
+    [M.ef, 'Project.prototype.isProjectChanged'],
     [M.ef, 'ProjectManager.getInstance'],
     [M.analytics, 'AnalyticsBusinessPlugin.instance.flush'],
     [M.analytics, 'AnalyticsBusinessPlugin.instance.safelyExitApplication'],

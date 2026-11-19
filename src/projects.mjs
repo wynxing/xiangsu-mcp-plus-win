@@ -7,6 +7,7 @@
 // (MIT, Copyright (c) 2026 muqian): official save_project for the first save,
 // generation pid prefix, WINDOW_LIMIT retry, unsaved-change refusal.
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { KeyedMutex } from './mutex.mjs';
 import { normalizePath, pathApi, pathInside, samePath } from './paths.mjs';
 
@@ -35,10 +36,29 @@ export async function waitFor(fn, { timeoutMs, intervalMs = 1000, sleep }) {
   }
 }
 
-function denyList(d) {
-  if (d.deny) return d.deny;
-  const raw = d.env?.XIANGSU_DENY_PROJECTS ?? process.env.XIANGSU_DENY_PROJECTS ?? '';
-  return raw.split('|').map((item) => item.trim()).filter(Boolean);
+function splitList(raw) {
+  return String(raw ?? '').split('|').map((item) => item.trim()).filter(Boolean);
+}
+
+function loadLocalConfig(file = fileURLToPath(new URL('../config.local.json', import.meta.url))) {
+  if (!fs.existsSync(file)) return {};
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw Error('not an object');
+    return parsed;
+  } catch (e) {
+    throw Error(`CONFIG_INVALID: ${file} (${e.message})`);
+  }
+}
+
+export function projectPolicy(d = {}) {
+  if (d.allow || d.deny) return { allow: d.allow ?? [], deny: d.deny ?? [] };
+  const env = d.env ?? process.env;
+  const file = d.localConfig ?? loadLocalConfig();
+  return {
+    allow: [...splitList(env.XIANGSU_ALLOW_PROJECTS), ...(file.allowProjects ?? [])],
+    deny: [...splitList(env.XIANGSU_DENY_PROJECTS), ...(file.denyProjects ?? [])],
+  };
 }
 
 export class Projects {
@@ -56,12 +76,38 @@ export class Projects {
     return samePath(a, b, { platform: this.platform, realpathSync: this.d.realpathSync });
   }
 
-  assertAllowed(target) {
-    for (const denied of denyList(this.d)) {
-      if (pathInside(target, denied, { platform: this.platform, realpathSync: this.d.realpathSync })) {
-        throw Error(`PROTECTED_PROJECT: ${target}`);
-      }
+  targetKey(abs) {
+    return `target:${this.platform === 'win32' ? abs.toLowerCase() : abs}`;
+  }
+
+  assertMutable(target) {
+    if (!target) throw Error('PROJECT_PATH_UNREADABLE: refusing a lifecycle change whose project path cannot be read');
+    const abs = this.normalize(target);
+    const { allow, deny } = projectPolicy(this.d);
+    for (const denied of deny) {
+      if (pathInside(abs, denied, { platform: this.platform, realpathSync: this.d.realpathSync })) throw Error(`PROTECTED_PROJECT: ${abs}`);
     }
+    const listed = allow.some((root) => pathInside(abs, root, { platform: this.platform, realpathSync: this.d.realpathSync }));
+    if (!listed) throw Error(`PROJECT_NOT_ALLOWLISTED: ${abs}`);
+    return abs;
+  }
+
+  assertNotDenied(target) {
+    if (!target) throw Error('PROJECT_PATH_UNREADABLE: refusing a lifecycle change whose project path cannot be read');
+    const abs = this.normalize(target);
+    const { deny } = projectPolicy(this.d);
+    for (const denied of deny) {
+      if (pathInside(abs, denied, { platform: this.platform, realpathSync: this.d.realpathSync })) throw Error(`PROTECTED_PROJECT: ${abs}`);
+    }
+    return abs;
+  }
+
+  assertTargetEmpty(abs) {
+    const exists = this.d.existsSync ?? fs.existsSync;
+    if (!exists(abs)) return;
+    const stat = (this.d.statSync ?? fs.statSync)(abs);
+    const entries = stat.isDirectory() ? (this.d.readdirSync ?? fs.readdirSync)(abs) : ['file'];
+    if (!stat.isDirectory() || entries.length) throw Error(`TARGET_NOT_EMPTY: ${abs}`);
   }
 
   async windows() {
@@ -133,7 +179,7 @@ export class Projects {
 
   async open({ path: target }) {
     const abs = this.normalize(target);
-    this.assertAllowed(abs);
+    this.assertMutable(abs);
     const file = pathApi(this.platform).join(abs, 'effect.dyehpj');
     const exists = this.d.existsSync ?? fs.existsSync;
     if (!exists(file)) throw Error(`NOT_A_PROJECT: ${abs} has no effect.dyehpj`);
@@ -151,6 +197,8 @@ export class Projects {
     if (windows.length >= MAX_WINDOWS) {
       throw Error(`WINDOW_LIMIT: all ${MAX_WINDOWS} project windows are in use; project_close one before opening another`);
     }
+    if (!windows[0].project_path) throw Error('LAUNCHER_PATH_UNREADABLE: refusing to open from a window whose project path cannot be read');
+    this.assertMutable(windows[0].project_path);
     return this.locks.run(windows[0].pid, () => this.openLocked(abs, windows[0].pid));
   }
 
@@ -184,20 +232,22 @@ export class Projects {
 
   async create({ path: target }) {
     const abs = this.normalize(target);
-    this.assertAllowed(abs);
-    const exists = this.d.existsSync ?? fs.existsSync;
-    if (exists(abs)) {
-      const stat = (this.d.statSync ?? fs.statSync)(abs);
-      const entries = stat.isDirectory() ? (this.d.readdirSync ?? fs.readdirSync)(abs) : ['file'];
-      if (!stat.isDirectory() || entries.length) throw Error(`TARGET_NOT_EMPTY: ${abs}`);
-    }
+    this.assertMutable(abs);
+    return this.locks.run(this.targetKey(abs), () => this.createHoldingTarget(abs));
+  }
+
+  async createHoldingTarget(abs) {
+    this.assertTargetEmpty(abs);
     const windows = await this.windows();
     if (!windows.length) throw Error(`NO_EDITOR_WINDOW: ${COLD_START.detail} (${COLD_START.code})`);
     if (windows.length >= MAX_WINDOWS) throw Error(`WINDOW_LIMIT: all ${MAX_WINDOWS} project windows are in use; project_close one first`);
-    return this.locks.run(windows[0].pid, () => this.createLocked(abs, windows[0].pid));
+    const launcher = windows[0];
+    if (!launcher.project_path) throw Error('LAUNCHER_PATH_UNREADABLE: refusing to create from a window whose project path cannot be read');
+    this.assertMutable(launcher.project_path);
+    return this.locks.run(launcher.pid, () => this.createLocked(abs, launcher.pid, launcher.project_path));
   }
 
-  async createLocked(abs, pid) {
+  async createLocked(abs, pid, launcherPath) {
     const windows = await this.windows();
     if (windows.length >= MAX_WINDOWS) throw Error(`WINDOW_LIMIT: all ${MAX_WINDOWS} project windows are in use; project_close one first`);
     const seen = new Set(windows.map((w) => `${w.pid}|${w.project_path}`));
@@ -208,8 +258,19 @@ export class Projects {
     );
     if (!created) throw Error('NEW_PROJECT_TIMEOUT: no new project window appeared');
     await this.waitReady(created.pid);
-    const instance_id = await this.instanceIdForPid(created.pid, this.d.instanceTimeoutMs);
-    if (instance_id === null) throw Error(`NO_OFFICIAL_INSTANCE: window ${created.pid} is not visible to the official MCP`);
+    const official = (await this.officialInstances()).find((instance) => instance.pid === created.pid);
+    if (!official?.project_path || !this.same(official.project_path, created.project_path)) {
+      throw Error(`STALE_OFFICIAL_INSTANCE: official path ${official?.project_path ?? 'missing'} does not match plugin path ${created.project_path}; save_project was not called`);
+    }
+    this.assertNotDenied(official.project_path);
+    this.assertNotDenied(created.project_path);
+    const launcherNow = (await this.windows()).find((w) => w.pid === pid);
+    if (!launcherNow?.project_path || !this.same(launcherNow.project_path, launcherPath)) {
+      throw Error('LAUNCHER_PROJECT_CHANGED: the window used to create the project no longer shows its original project; save_project was not called');
+    }
+    this.assertMutable(abs);
+    this.assertTargetEmpty(abs);
+    const instance_id = official.instance_id;
     let saved;
     try {
       saved = await this.d.official.callJson('save_project', { instance_id, path: abs, intention: '新建工程首次保存' });
@@ -239,7 +300,18 @@ export class Projects {
       throw Error(projectPath ? `NO_UNIQUE_WINDOW for ${projectPath}: ${hits.length} matches` : `AMBIGUOUS_INSTANCE: ${windows.length} windows; pass project_path or instance_id`);
     }
     const hit = hits[0];
-    if (hit.project_path) this.assertAllowed(hit.project_path);
+    let instances;
+    try {
+      instances = await this.officialInstances();
+    } catch (e) {
+      throw Error(`OFFICIAL_PATH_UNCONFIRMED: ${e.message}; refusing to close`);
+    }
+    const official = instances.find((instance) => instance.pid === hit.pid);
+    if (!hit.project_path || (official?.project_path && !this.same(hit.project_path, official.project_path))) {
+      throw Error(`PROJECT_PATH_UNREADABLE: refusing to close pid ${hit.pid}; plugin path ${hit.project_path ?? 'missing'}, official path ${official?.project_path ?? 'missing'}`);
+    }
+    if (official?.project_path) this.assertMutable(official.project_path);
+    this.assertMutable(hit.project_path);
     return this.locks.run(hit.pid, () => this.closeLocked(hit, args));
   }
 
@@ -249,6 +321,9 @@ export class Projects {
       state = await this.d.callPlugin('project_state', {}, { pid: hit.pid, timeoutMs: 5000 });
     } catch (e) {
       throw Error(`UNKNOWN_DIRTY_STATE: cannot read unsaved state for pid ${hit.pid} (${e.message}); refusing to close`);
+    }
+    if (!state?.project_path || !this.same(state.project_path, hit.project_path)) {
+      throw Error(`PROJECT_PATH_UNREADABLE: project_state path ${state?.project_path ?? 'missing'} does not match ${hit.project_path}; refusing to close`);
     }
     if (state?.changed !== true && state?.changed !== false) {
       throw Error(`UNKNOWN_DIRTY_STATE: unsaved state for pid ${hit.pid} is not true or false; refusing to close`);

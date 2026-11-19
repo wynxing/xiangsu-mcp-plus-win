@@ -38,10 +38,12 @@ MCP 客户端 --stdio--> src/server.mjs
 
 - 打开：`OpenProjectFromEditCommand('openLocal', 绝对路径)`。首页进程决定新窗口还是空闲进程。`reuseCurrent` 视为 `WINDOW_LIMIT`，避免把工程换进当前窗口。
 - 新建：`createNew`，等到路径里出现 `ProjectCreatedTmp`，再调用官方 `save_project` **一次**（`intention` 为「新建工程首次保存」）。目标已存在且非空目录则 `TARGET_NOT_EMPTY`，此时不调用保存，也不创建目录。
-- 关闭：先读 `project_state`。`changed === true` 且没有 `discard_changes` 时拒绝。`changed` 不是布尔值，或状态调用失败，则 `UNKNOWN_DIRTY_STATE`，不调用卸载。通过之后插件才 `Project.unload`、`flush`、`safelyExitApplication('no_save_exit')`，延迟 300 ms，让 RPC 先返回。没有 `taskkill`，没有重启编辑器。
+- 关闭：`features.project` 包含 `Project.prototype.isProjectChanged`。没有活动工程、没有路径，或 `isProjectChanged` 不是布尔值，都是 `UNKNOWN_DIRTY_STATE`，不能当成未修改。`changed === true` 且没有 `discard_changes` 时拒绝。通过之后延迟 300 ms，在 `Project.unload` 之前再读一次；这时如果不能证明仍然干净，就不卸载、不调用 `safelyExitApplication('no_save_exit')`。失败不会在 `catch` 里改走退出。没有 `taskkill`，没有重启编辑器。
 - 同一窗口上的打开、新建、关闭串行。不同窗口可以并行。窗口上限按 2 预检，最终仍以首页进程的 `WINDOW_LIMIT` 为准。
 - 多个窗口时必须给出 `project_path` 或 `instance_id`。路径比较在 Windows 上忽略大小写和斜杠，并做 NFC。
-- `XIANGSU_DENY_PROJECTS` 里的目录及其子目录直接拒绝。默认名单是空的，仓库里不写个人工程名。
+- 生命周期变更使用白名单。`XIANGSU_ALLOW_PROJECTS` 或未跟踪的 `config.local.json`（`allowProjects`）列出允许的根目录；不在名单里的路径返回 `PROJECT_NOT_ALLOWLISTED`。`XIANGSU_DENY_PROJECTS` / `denyProjects` 优先，返回 `PROTECTED_PROJECT`。仓库不写具体工程名。
+- 关窗时插件路径必须能读到，并且和官方 `list_instances` 里同一 pid 的路径一致。读不到、对不上，或官方列表读失败，都不调用 `project_close`。
+- `project_new` 按目标路径加锁。空目录检查在锁内做两次，后一次紧挨着 `save_project`。官方实例的 `project_path` 必须等于插件上报的 `ProjectCreatedTmp` 路径，两者都不在黑名单里。发起新建的窗口必须仍显示原来的已允许工程。任何一条不成立都不调用 `save_project`。
 
 `self_check` 强制的只有 `project`：`Project.unload`、`ProjectManager.getInstance`、分析插件的 `flush` / `safelyExitApplication`、`OpenProjectFromEditCommand`、`EditSender.getInstance`、`SceneModule.getEditingSceneService`。缺任何一项，工具抛 `INCOMPATIBLE_EDITOR`。`quietWindows`、`music`、`icon` 只出现在诊断里。编辑器升级后要重跑 `ext_status`。
 
@@ -53,7 +55,9 @@ MCP 客户端 --stdio--> src/server.mjs
 
 探测顺序：`XIANGSU_EDITOR_EXE`、`XIANGSU_EDITOR_ROOT`、正在运行的 `Douyin AR.exe` 或 `orionkit.exe`、然后是 LocalAppData / Program Files 下的 `Douyin AR`。显式根目录不合法时不会退回到别的候选。产品资源目录是产品根下的 `Resources`。把根指到 `electron` 子目录时，若父目录才有成对的 exe 和 `Resources`，会走到父目录，避免把 Electron 自己的 `Resources` 当成编辑器资源。
 
-令牌文件：POSIX 上目录 `0700`、文件 `0600`。Windows 上 `icacls` 去掉继承并只授权当前 `whoami`。ACL 失败则不留下可读的令牌文件。
+令牌文件：POSIX 上目录 `0700`、文件 `0600`。Windows 上用 PowerShell 关掉继承、删掉现有访问项，只留下当前 `whoami` 的 Allow，再读回 DACL。读回结果里只要还有别的身份，就删除令牌文件并停止监听。只执行 `icacls /inheritance:r /grant:r` 不够，因为它留着原来的显式 ACE。
+
+安装：先把将要替换的插件目录整份复制到 `install-backups`，新目录在临时名称下写完并核对之后才替换。写到一半失败时，原来的 `index.js` 还在。服务启动时的自动安装走同一条路径。
 
 ## 已测与未测
 

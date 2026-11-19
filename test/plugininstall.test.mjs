@@ -100,6 +100,44 @@ test('a package run from the npx cache is copied out before the cache disappears
   assert.equal(ensurePlugin({ pluginRoot, pkgRoot: fakePackage('1.2.0', cache), stateRoot }).action, 'kept');
 });
 
+test('a failed stage keeps the previous plugin files', () => {
+  const pluginRoot = pluginRootWithOthers();
+  const stateRoot = tmpdir('xs-st-');
+  ensurePlugin({ pluginRoot, pkgRoot: fakePackage('1.0.0'), stateRoot });
+  const oldIndex = path.join(pluginRoot, 'XiangsuMcpPlus@1.0.0', 'index.js');
+  const oldText = fs.readFileSync(oldIndex, 'utf8');
+  const oldConfig = fs.readFileSync(path.join(pluginRoot, 'plugins.config.json'), 'utf8');
+  assert.throws(
+    () =>
+      ensurePlugin({
+        pluginRoot,
+        pkgRoot: fakePackage('2.0.0'),
+        stateRoot,
+        writeFileSync(file, data) {
+          if (String(file).endsWith('index.js')) throw Error('disk full');
+          fs.writeFileSync(file, data);
+        },
+      }),
+    /disk full/,
+  );
+  assert.equal(fs.readFileSync(oldIndex, 'utf8'), oldText);
+  assert.equal(fs.readFileSync(path.join(pluginRoot, 'plugins.config.json'), 'utf8'), oldConfig);
+  assert.equal(fs.existsSync(path.join(pluginRoot, 'XiangsuMcpPlus@2.0.0')), false);
+});
+
+test('replacing a plugin keeps a restorable copy of the old directory', () => {
+  const pluginRoot = pluginRootWithOthers();
+  const stateRoot = tmpdir('xs-st-');
+  const oldPkg = fakePackage('1.0.0');
+  ensurePlugin({ pluginRoot, pkgRoot: oldPkg, stateRoot });
+  const upgraded = ensurePlugin({ pluginRoot, pkgRoot: fakePackage('2.0.0'), stateRoot });
+  assert.equal(upgraded.action, 'installed');
+  assert.ok(upgraded.directory_backups.length >= 1);
+  const copied = fs.readFileSync(path.join(upgraded.directory_backups[0], 'index.js'), 'utf8');
+  assert.ok(copied.includes(oldPkg));
+  assert.ok(fs.existsSync(path.join(pluginRoot, 'XiangsuMcpPlus@2.0.0', 'index.js')));
+});
+
 test('dry-run does not write the plugin', () => {
   const pluginRoot = pluginRootWithOthers();
   const before = fs.readdirSync(pluginRoot).sort();

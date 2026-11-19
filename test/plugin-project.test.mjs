@@ -9,13 +9,24 @@ const { CLOSE_DELAY_MS } = require('../editor-plugin/features/project.cjs');
 
 function editor(overrides = {}) {
   const calls = [];
+  let reads = 0;
+  function Project() {}
+  Project.unload = async () => calls.push('unload');
+  if (!overrides.omitChanged) Project.prototype.isProjectChanged = function () { return false; };
   const registry = {
     [M.ef]: {
-      Project: { unload: async () => calls.push('unload') },
+      Project,
       ProjectManager: {
         getInstance: () => ({
-          hasActiveProject: () => true,
-          getCurrentActiveProject: () => ({ path: 'E:\\工作\\probe', isProjectChanged: () => overrides.changed ?? false }),
+          hasActiveProject: () => overrides.active !== false,
+          getCurrentActiveProject: () => ({
+            path: overrides.path === undefined ? 'E:\\工作\\probe' : overrides.path,
+            isProjectChanged: () => {
+              reads += 1;
+              if (overrides.changedSequence) return overrides.changedSequence[Math.min(reads - 1, overrides.changedSequence.length - 1)];
+              return overrides.changed ?? false;
+            },
+          }),
         }),
       },
     },
@@ -85,6 +96,30 @@ test('project_launch refuses a reuse answer and project_close refuses dirty or u
     return original(name);
   };
   assert.throws(() => unknown.lib.projectState(), /UNKNOWN_DIRTY_STATE/);
+});
+
+test('a window that is not active, or becomes dirty before exit, is not closed', async () => {
+  const inactive = editor({ active: false });
+  const skipped = [];
+  inactive.lib.schedule = (fn, ms) => skipped.push(ms);
+  assert.throws(() => inactive.lib.projectClose({}), /UNKNOWN_DIRTY_STATE/);
+  assert.deepEqual(skipped, []);
+
+  const { lib, calls } = editor({ changedSequence: [false, true] });
+  const scheduled = [];
+  lib.schedule = (fn, ms) => scheduled.push({ ms, fn });
+  const result = lib.projectClose({});
+  assert.equal(result.discarded_changes, false);
+  await scheduled[0].fn();
+  assert.deepEqual(calls, []);
+});
+
+test('project compatibility requires isProjectChanged', () => {
+  const { lib } = editor({ omitChanged: true });
+  const check = lib.selfCheck('project');
+  assert.equal(check.ok, false);
+  assert.ok(check.missing.some((item) => item.includes('isProjectChanged')));
+  assert.throws(() => lib.projectClose({}), /INCOMPATIBLE_EDITOR/);
 });
 
 test('a clean close schedules unload and does not exit immediately', () => {

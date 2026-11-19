@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { Projects } from '../src/projects.mjs';
@@ -33,6 +34,7 @@ function world({ paths } = {}) {
     instanceTimeoutMs: 0,
     saveTimeoutMs: 50,
     platform: process.platform,
+    allow: [os.tmpdir()],
     listInstances: () => [...windows.keys()].map((pid) => ({ pid })),
     callPlugin: async (method, params, opts) => {
       calls.push(['plugin', method, params, opts.pid]);
@@ -148,7 +150,7 @@ test('close refuses a dirty or unknown project and does not call project_close',
   d.callPlugin = async (method) => {
     calls.push(method);
     if (method === 'status') return { projectPath };
-    if (method === 'project_state') return { changed: null, scene_ready: true };
+    if (method === 'project_state') return { project_path: projectPath, changed: null, scene_ready: true };
     throw Error(`unexpected ${method}`);
   };
   await assert.rejects(new Projects(d).close({ project_path: projectPath }), /UNKNOWN_DIRTY_STATE/);
@@ -233,11 +235,85 @@ test('windows unicode paths with different slashes and case select the same wind
   const shown = 'e:/工作/特效/probe';
   const { d, calls } = world({ paths: [[7, shown]] });
   d.platform = 'win32';
+  d.allow = ['E:\\工作'];
   d.existsSync = (file) => file.replace(/\//g, '\\').toLowerCase() === 'e:\\工作\\特效\\probe\\effect.dyehpj';
   const out = await new Projects(d).open({ path: 'E:\\工作\\特效\\Probe' });
   assert.equal(out.already_open, true);
   assert.equal(out.pid, 7);
   assert.equal(calls.some((call) => call[1] === 'project_launch'), false);
+});
+
+test('close refuses a window whose path cannot be read', async () => {
+  const protectedDir = path.join(tmpdir('xs-keep-'), 'keep');
+  const { d, calls } = world({ paths: [[5, null]] });
+  d.deny = [protectedDir];
+  await assert.rejects(new Projects(d).close({}), /PROJECT_PATH_UNREADABLE/);
+  assert.equal(calls.some((call) => call[1] === 'project_close'), false);
+});
+
+test('project_new does not save when the official instance still points at another project', async () => {
+  const { d, calls, windows } = world();
+  const launcher = windows.get(100);
+  const protectedDir = path.join(tmpdir('xs-keep-'), 'keep');
+  const probe = path.join(tmpdir('xs-probe-'), '空白');
+  d.allow = [path.dirname(launcher), path.dirname(probe)];
+  d.deny = [protectedDir];
+  const original = d.official.callJson;
+  d.official.callJson = async (name, args) => {
+    if (name === 'list_instances') {
+      return {
+        instances: [
+          { instance_id: 'host', generation: '100-abc', project_path: launcher },
+          { instance_id: 'keep', generation: '201-abc', project_path: protectedDir },
+        ],
+      };
+    }
+    return original(name, args);
+  };
+  await assert.rejects(new Projects(d).create({ path: probe }), /STALE_OFFICIAL_INSTANCE/);
+  assert.equal(calls.some((call) => call[1] === 'save_project'), false);
+});
+
+test('a project outside the allowlist is not created or saved', async () => {
+  const { d, calls, windows } = world();
+  d.allow = [path.dirname(windows.get(100))];
+  const probe = path.join(tmpdir('xs-out-'), 'n');
+  await assert.rejects(new Projects(d).create({ path: probe }), /PROJECT_NOT_ALLOWLISTED/);
+  assert.equal(calls.some((call) => call[1] === 'save_project'), false);
+});
+
+test('two project_new calls for one empty directory save only once', async () => {
+  const { d, windows } = world();
+  const parent = tmpdir('xs-race-');
+  const target = path.join(parent, 'same');
+  d.allow = [os.tmpdir()];
+  let saves = 0;
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const original = d.official.callJson;
+  d.official.callJson = async (name, args) => {
+    if (name === 'save_project') {
+      saves += 1;
+      fs.mkdirSync(args.path, { recursive: true });
+      fs.writeFileSync(path.join(args.path, 'effect.dyehpj'), '{}');
+      if (saves === 1) await gate;
+    }
+    return original(name, args);
+  };
+  const projects = new Projects(d);
+  const first = projects.create({ path: target });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  const second = projects.create({ path: target });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(saves, 1);
+  release();
+  const results = await Promise.allSettled([first, second]);
+  assert.equal(saves, 1);
+  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+  assert.match(results.find((result) => result.status === 'rejected').reason.message, /TARGET_NOT_EMPTY/);
+  assert.equal(windows.get(100), windows.get(100));
 });
 
 test('generation prefixes are pids and a second window is refused at the cap', async () => {
