@@ -17,6 +17,9 @@ const required = [
   'package/src/icon-image.mjs',
   'package/src/icons.mjs',
   'package/editor-plugin/features/icon.cjs',
+  'package/editor-plugin/features/music.cjs',
+  'package/src/music.mjs',
+  'package/npm-shrinkwrap.json',
 ];
 
 function npm(args, options) {

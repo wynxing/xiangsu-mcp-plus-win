@@ -1,6 +1,6 @@
 # xiangsu-mcp-plus-win
 
-非官方的 Windows MCP 桥。它把像塑已经提供的官方 MCP 工具原样转发出来，并只补上官方目前没有的工程窗口开关：`project_open`、`project_new`、`project_close`，外加 `ext_status` 自检。
+非官方的 Windows MCP 桥。它把像塑已经提供的官方 MCP 工具原样转发出来，并补上官方目前没有的工程窗口开关（`project_open`、`project_new`、`project_close`）和抖音曲库（`music_categories`、`music_list`、`music_search`、`music_apply`），外加 `ext_status` 自检。
 
 这不是字节跳动或抖音的产品，与官方没有从属关系。只供学习和个人制作。不要用它提交审核、勾选创作者协议、发布特效，或对不能丢弃的工程做关闭和保存。
 
@@ -22,11 +22,11 @@ MIT。版权与归属见 [LICENSE](LICENSE) 和 [NOTICE](NOTICE)。
 - 已有工程窗口时：`project_open` / `project_new` / `project_close`。
 - 没有工程窗口时：明确返回 `WINDOWS_COLD_START_UNVERIFIED`。本版不会去启动 `Douyin AR.exe`。
 
-曲库工具没有注册。`features.music` 只是诊断，缺曲库模块不会把 `features.project` 判失败。
+曲库工具已注册，还没有在像塑里验收。`music_categories`、`music_list`、`music_search` 返回 `category_code` 或 `music_id`，以及可原样交回 `music_apply` 的 `selection`（`source`、`category_code` 或 `query`、`page_cursor`）。绑定只按这个 `music_id` 再读同一页，走曲库的 `setDouyinMusicInfo`，不把本地音频文件导进工程。`confirmed` 只在读回的 id 一致时为真；写完读不到、对不上、或调用中断，都不会再发一次。多个窗口时曲库工具也要 `project_path` 或 `instance_id`。`music_apply` 沿用当时的允许/拒绝路径规则，并要求插件路径和官方实例路径仍是同一个工程。`features.music` 为假时曲库工具失败，不把 `features.project` 判失败。
 
 `icon_set` 和 `icon_open` 已注册，但还没有在像塑 9.8.3 里读回。多个工程窗口时必须给出 `project_path` 或 `instance_id`。插件先做 `features.icon` 自检，缺模块就失败，工程开关仍可用。`icon_set` 先在本机做成 360×360 的新 PNG，再交给那个窗口写到编辑器报告的图标路径并上传一次。上传返回值不是 `true`、或请求断线、超时时，不自动再传，也不把结果说成成功。这不是提交审核：不勾协议、不点提交、不发布、不调用付费生成。`icon_open` 只调用 `showIconCreationWindow`，不声称窗口已经可见，也不去最小化。
 
-360×360 的图标图由 `src/icon-image.mjs` 在本机生成。它按文件头识别 png、jpeg、gif、webp，先按 EXIF 转正，再按较短边裁出正方形（左/上偏移是 `floor((源边 - 边长) / 2)`，多出来的一像素留在右侧或下侧），然后用 lanczos3 缩放到 360 的新 PNG。小于 360 的图会放大，不留边。源文件不改。不调用 macOS `sips`。
+360×360 的图标图由 `src/icon-image.mjs` 在本机生成。它按文件头识别 png、jpeg、gif、webp，先按 EXIF 转正，再按较短边裁出正方形（左/上偏移是 `floor((源边 - 边长) / 2)`，多出来的一像素留在右侧或下侧），然后用 lanczos3 缩放到 360 的新 PNG。小于 360 的图会放大，不留边。源文件不改。不调用 macOS `sips`。依赖 `sharp` 0.34.5，安装时用 `npm ci`，它会按当前系统拉取对应的预编译包（Windows 为 `sharp-win32-x64`）。
 
 ## 环境
 
@@ -94,14 +94,14 @@ node scripts\install.mjs
 从源码包安装：
 
 ```bat
-tar -xf xiangsu-mcp-plus-win-0.1.6.tgz
+tar -xf xiangsu-mcp-plus-win-0.1.7.tgz
 cd package
-npm install
+npm ci
 set XIANGSU_EDITOR_ROOT=D:\path\to\Douyin AR
 node scripts\install.mjs
 ```
 
-插件目录是 `%LOCALAPPDATA%\DouyinAR\Plugins\v9.8.3\Local\XiangsuMcpPlus@0.1.6`。运行时代码在 `%USERPROFILE%\.xiangsu-mcp-plus-win\editor-plugin\0.1.6\<构建号>\`。不要为了让窗口出现而改用户主目录的 `package.json`。stdio 即使设置了别的 `XIANGSU_MCP_PLUS_STATE`，也会读取默认主目录里的实例文件。同一个 pid 在两个目录里都有活记录且端口或令牌不同时，服务拒绝选择。
+插件目录是 `%LOCALAPPDATA%\DouyinAR\Plugins\v9.8.3\Local\XiangsuMcpPlus@0.1.7`。运行时代码在 `%USERPROFILE%\.xiangsu-mcp-plus-win\editor-plugin\0.1.7\<构建号>\`。不要为了让窗口出现而改用户主目录的 `package.json`。stdio 即使设置了别的 `XIANGSU_MCP_PLUS_STATE`，也会读取默认主目录里的实例文件。同一个 pid 在两个目录里都有活记录且端口或令牌不同时，服务拒绝选择。
 
 `features.project` 在类直接导出（`Project.prototype.isProjectChanged`）或 9.8.3 命名空间（`Project.Project.prototype.isProjectChanged`）时可以为真；两条都没有、也没有已打开工程上的实例方法时仍为假。关闭还要求插件方法和官方 `project_status` 的 `is_changed` 都是 `false`，并且官方 `scene_dirty` 不是 `true`。这还不是编辑器验收，装完要重新打开可丢弃窗口后再看 `ext_status`。
 
@@ -110,6 +110,8 @@ node scripts\install.mjs
 0.1.5 写 DACL 时不从 `PATH` 找 `powershell.exe` 或 `whoami.exe`，只用 `SystemRoot` 下的绝对路径。只有 `System32`、没有 `WindowsPowerShell\v1.0` 的进程也能定位到系统里的 `powershell.exe`。找不到就失败，不跳过 ACL。插件启动失败写到 `logs/plugin.log` 的 `init failed`，并接住异步拒绝。这不是像塑实机验收。
 
 0.1.6 把同一条绝对路径用到 stdio 的进程启动时间检查和正在运行的编辑器发现。启动时间查不到仍是错误，不是空窗口列表。空闲工程进程（插件已连接、`project_path` 为空）可以发起 `project_open` / `project_new`。首页进程可能把工程放进这个进程，也可能另开一个进程；读回路径对上的那个 pid 才是结果。已经显示工程的窗口不会被换成新工程。没有插件进程时仍不启动编辑器。文件关联不是这个请求。这不是像塑实机验收。
+
+0.1.7 把 0.1.6 与已完成的图标、曲库改动放进同一个安装包。`npm ci` 会安装 `sharp` 0.34.5 的当前平台预编译包。图标和曲库的编辑器读回仍未验收。
 
 把 stdio 服务交给 MCP 客户端时，用本机的 `node` 运行 `src/server.mjs`，工作目录是本包根目录。服务启动时会再尝试安装；安装失败只记在 `ext_status.plugin_install`，官方转发仍然可以启动。
 
@@ -143,10 +145,24 @@ node scripts/rollback.mjs --plugin-root "%LOCALAPPDATA%\DouyinAR\Plugins\v9.8.3\
 5. 用官方 `list_instances` 只读核对测试窗口。官方工具由本服务转发，断线后不会自动再发。
 6. `project_close` 只关测试窗口。读不到工程路径、路径和官方实例不一致、或不能证明没有未保存修改时都会拒绝。关窗前会再读一次脏状态；这 300 毫秒里变成了脏且没有 `discard_changes`，进程不会退出。确认别的窗口还在。
 7. `project_open` 再打开测试工程目录（里面要有 `effect.dyehpj`）。已经打开时会原样返回。
-8. `project_new` 指到一个还不存在的空目录，且不在黑名单里。若配置了白名单，目录还必须落在其中。保存前会再确认目录仍是空的，并要求官方实例路径和插件里的临时工程路径一致、都不在黑名单里，而且用来新建的那个窗口还停在原来的工程上。对不上就不会调用 `save_project`。
+8. `project_new` 指到一个还不存在的空目录，且不在黑名单里。若配置了白名单，目录还必须落在其中。保存前会再确认目录仍是空的，并要求官方实例路径和插件里的临时工程路径一致、都不在黑名单里。发起窗口如果本来就显示着一个工程，它必须还停在那个工程上。空闲窗口可以自己变成新建结果。对不上就不会调用 `save_project`。
 9. 关掉新建窗口，删掉临时目录。不要点提交审核，不要勾选协议。
 
 没有插件进程时，`project_open` 应返回 `NO_EDITOR_WINDOW` 和 `WINDOWS_COLD_START_UNVERIFIED`，并且不会启动编辑器。只有一个空闲工程进程时，可以对一个可丢弃的空目录调用 `project_new`，再对一个含 `effect.dyehpj` 的可丢弃工程调用 `project_open`。结果里的 pid 可以是原来的空闲进程，也可以是新进程；插件路径和官方实例路径都要读回成目标路径。`PATH` 里没有 `WindowsPowerShell\v1.0` 时，`ext_status` 仍应列出这个窗口，而不是 `PROCESS_START_CHECK_FAILED`。这两步还不是已经完成的实机验收。
+
+曲库还要在可丢弃窗口上另做一次，做完不要保存到不能丢的工程，也不要勾协议或提交审核：
+
+1. `ext_status` 里该窗口的 `self_check.features.music` 必须为真。为假就停，缺的是 `missing` 里的曲库模块，不是工程开关。
+2. `music_categories`，再 `music_search`（或 `music_list`）。记下一条的 `music_id` 和整份 `selection`。
+3. `music_apply` 把这份 `selection` 原样传回，并带上同一个 `project_path` 或 `instance_id`。`confirmed` 为真且 `readback.music_id` 等于所选 id，才算这次绑定对上了。`binding` 应为 `douyin_library`。
+4. 若返回 `MUSIC_APPLY_UNCONFIRMED`、`MUSIC_APPLY_MISMATCH` 或传输失败，不要再调一次。错误里若有可读方法名，记下来即可。不要把合同测试的通过写成编辑器验收。
+
+图标在同一个可丢弃工程上另做一次，不要提交审核、勾协议、发布或付费：
+
+1. `ext_status` 里该窗口的 `self_check.features.icon` 必须为真。为假就停。
+2. 准备一张可丢弃的 png、jpeg、gif 或 webp，绝对路径交给 `icon_set`，并带上该窗口的 `project_path` 或 `instance_id`。
+3. 返回里 `uploaded` 为真、`calls` 为 1、`prepared` 是 360×360，`project_icons` 里的路径还能读到刚写入的 PNG。对不上或 `ICON_UPLOAD_UNCONFIRMED` 时不要再传。
+4. `icon_open` 只要求插件调用了 `showIconCreationWindow`。不要把窗口是否出现在屏幕上当成已经证明。
 
 ## 开发测试
 
@@ -165,4 +181,4 @@ npm test
 npm run pack
 ```
 
-产物在 `release/xiangsu-mcp-plus-win-0.1.6.tgz`，旁边有 `.sha256`。解压后的包包含 `scripts/install.mjs`、`scripts/uninstall.mjs`、`scripts/rollback.mjs` 和 `src/server.mjs`。包里没有官方程序、素材或令牌。
+产物在 `release/xiangsu-mcp-plus-win-0.1.7.tgz`，旁边有 `.sha256`。解压后的包包含 `npm-shrinkwrap.json`、`scripts/install.mjs`、`scripts/uninstall.mjs`、`scripts/rollback.mjs` 和 `src/server.mjs`。在解压目录执行 `npm ci` 才会装上 `sharp` 0.34.5 的当前平台预编译包。包里没有官方程序、素材或令牌。

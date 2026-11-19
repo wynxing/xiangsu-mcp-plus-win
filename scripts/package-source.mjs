@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const dest = path.join(root, 'release');
+fs.copyFileSync(path.join(root, 'package-lock.json'), path.join(root, 'npm-shrinkwrap.json'));
 fs.mkdirSync(dest, { recursive: true });
 for (const name of fs.readdirSync(dest)) {
   if (name.endsWith('.tgz') || name.endsWith('.sha256')) fs.rmSync(path.join(dest, name));
