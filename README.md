@@ -130,4 +130,4 @@ npm test
 npm run pack
 ```
 
-产物在 `release/xiangsu-mcp-plus-win-0.1.0.tgz`，旁边有 `.sha256`。包里没有官方程序、素材或令牌。
+产物在 `release/xiangsu-mcp-plus-win-0.1.0.tgz`，旁边有 `.sha256`。解压后的包包含 `scripts/install.mjs`、`scripts/uninstall.mjs`、`scripts/rollback.mjs` 和 `src/server.mjs`。包里没有官方程序、素材或令牌。

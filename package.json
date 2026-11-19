@@ -10,7 +10,8 @@
   "bin": {
     "xiangsu-mcp-plus-win": "src/server.mjs",
     "xiangsu-mcp-plus-win-install": "scripts/install.mjs",
-    "xiangsu-mcp-plus-win-uninstall": "scripts/uninstall.mjs"
+    "xiangsu-mcp-plus-win-uninstall": "scripts/uninstall.mjs",
+    "xiangsu-mcp-plus-win-rollback": "scripts/rollback.mjs"
   },
   "scripts": {
     "test": "node --test",
@@ -28,6 +29,7 @@
     "editor-plugin/",
     "scripts/install.mjs",
     "scripts/uninstall.mjs",
+    "scripts/rollback.mjs",
     "docs/",
     "test/",
     "support/",
