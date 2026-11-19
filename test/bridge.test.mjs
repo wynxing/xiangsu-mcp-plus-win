@@ -24,6 +24,10 @@ async function window(answer) {
   const calls = [];
   const server = http.createServer((req, res) => {
     calls.push(req.url);
+    if (answer === 'reset') {
+      req.socket.destroy();
+      return;
+    }
     if (answer === 'hang') return;
     if (answer === 'echo-auth') {
       res.end(JSON.stringify({ ok: false, error: `leaked ${req.headers.authorization}` }));
@@ -61,7 +65,17 @@ test('plugin calls do not go through the built-in fetch', async () => {
   globalThis.fetch = () => Promise.reject(Error('built-in fetch used'));
   try {
     assert.deepEqual(await callPlugin('status', {}, { projectPath: target, dir }), { projectPath: target });
+    assert.deepEqual(await callPlugin('status', {}, { projectPath: target, dir }), { projectPath: target });
   } finally {
     globalThis.fetch = builtin;
   }
+});
+
+test('a dropped plugin connection names the cause and hides the token', async () => {
+  const dir = path.join(tmpdir('xs-bridge-'), 'instances');
+  const dropped = await window('reset');
+  writeRecords(dir, [dropped]);
+  const err = await callPlugin('project_launch', { operation: 'createNew' }, { pid: dropped.pid, dir, timeoutMs: 2000 }).catch((e) => e);
+  assert.match(err.message, /^PLUGIN_RPC_FAILED\(project_launch\): .+ \([^)]+\)$/);
+  assert.equal(err.message.includes('super-secret-token'), false);
 });

@@ -69,15 +69,31 @@ export function listInstances({ dir, dirs, env = process.env, homedir = os.homed
 }
 
 async function post(instance, method, params, timeoutMs) {
-  const res = await longFetch(`http://127.0.0.1:${instance.port}/rpc`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${instance.token}` },
-    body: JSON.stringify({ method, params }),
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-  const body = await res.json();
+  let res;
+  try {
+    res = await longFetch(`http://127.0.0.1:${instance.port}/rpc`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', connection: 'close', authorization: `Bearer ${instance.token}` },
+      body: JSON.stringify({ method, params }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (e) {
+    throw rpcFailure(method, e);
+  }
+  let body;
+  try {
+    body = await res.json();
+  } catch (e) {
+    throw rpcFailure(method, e);
+  }
   if (!body.ok) throw Error(redact(`PLUGIN_ERROR(${method}): ${body.error}`));
   return body.value;
+}
+
+function rpcFailure(method, error) {
+  const label = error?.cause?.code || error?.cause?.name || error?.code || error?.name || 'unknown';
+  const message = error?.message || 'fetch failed';
+  return Error(redact(`PLUGIN_RPC_FAILED(${method}): ${message} (${label})`));
 }
 
 async function projectOf(instance) {

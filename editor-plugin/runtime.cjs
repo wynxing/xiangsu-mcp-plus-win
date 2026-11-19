@@ -85,6 +85,7 @@ class Runtime {
     const { instanceDir } = statePaths();
     this.stateFile = path.join(instanceDir, `${process.pid}.json`);
     this.server = http.createServer((req, res) => this.handle(req, res));
+    this.server.requestTimeout = 0;
     return new Promise((resolve, reject) => {
       this.server.once('error', reject);
       this.server.listen(0, '127.0.0.1', () => {
@@ -146,10 +147,13 @@ class Runtime {
         return send(400, { ok: false, error: 'invalid json' });
       }
       const job = async () => {
+        const mutating = MUTATING.has(body.method);
+        if (mutating) this.log('rpc start', body.method);
         try {
           const fn = this.resolve(body.method);
           if (!fn) return send(400, { ok: false, error: `unknown method: ${body.method}` });
           const value = await fn(body.params || {});
+          if (mutating) this.log('rpc done', body.method);
           send(200, { ok: true, value });
         } catch (e) {
           this.log('rpc error', body.method, e && e.stack);

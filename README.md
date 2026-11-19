@@ -73,11 +73,11 @@ node scripts/install.mjs --dry-run
 
 令牌文件在 Windows 上会换成只含当前用户的 DACL，并读回来核对。核对失败就删掉令牌文件并停止监听。POSIX 上目录是 `0700`，文件是 `0600`。
 
-同一版本只有在构建号一致、这份 CommonJS 边界还在、并且状态目录里的 `runtime.cjs` 还在时，再次安装才是 `kept`。0.1.1 及更早的安装没有 9.8.3 的 `Project.Project` 探测，安装 0.1.2 会替换它们。`--force` 仍会重装。
+同一版本只有在构建号一致、这份 CommonJS 边界还在、并且状态目录里的 `runtime.cjs` 还在时，再次安装才是 `kept`。0.1.2 没有把插件 RPC 的 `fetch failed` 原因码写出来，安装 0.1.3 会替换它。`--force` 仍会重装。
 
-插件只在带 `--projectType=project` 的工程窗口里启动。已经开着的窗口不会重新加载。装完 0.1.2 之后，关掉可丢弃的工程窗口再打开一次。
+插件只在带 `--projectType=project` 的工程窗口里启动。已经开着的窗口不会重新加载。装完 0.1.3 之后，关掉可丢弃的工程窗口再打开一次。
 
-从已经装过 0.1.1 的机器升级时，不要改 `%USERPROFILE%\package.json`，也不要改像塑程序目录：
+从已经装过 0.1.2 的机器升级时，不要改 `%USERPROFILE%\package.json`，也不要改像塑程序目录：
 
 ```bat
 set XIANGSU_EDITOR_ROOT=D:\path\to\Douyin AR
@@ -85,21 +85,23 @@ node scripts\install.mjs --dry-run
 node scripts\install.mjs
 ```
 
-需要替换时，`--dry-run` 的 `action` 是 `dry-run`，`version` 是 `0.1.2`，`requires_window_reopen` 为真。若 `action` 已是 `kept` 且 `version` 仍是 `0.1.1`，跑到的还是旧包。
+需要替换时，`--dry-run` 的 `action` 是 `dry-run`，`version` 是 `0.1.3`，`requires_window_reopen` 为真。若 `action` 已是 `kept` 且 `version` 仍是 `0.1.2`，跑到的还是旧包。
 
 从源码包安装：
 
 ```bat
-tar -xf xiangsu-mcp-plus-win-0.1.2.tgz
+tar -xf xiangsu-mcp-plus-win-0.1.3.tgz
 cd package
 npm install
 set XIANGSU_EDITOR_ROOT=D:\path\to\Douyin AR
 node scripts\install.mjs
 ```
 
-插件目录是 `%LOCALAPPDATA%\DouyinAR\Plugins\v9.8.3\Local\XiangsuMcpPlus@0.1.2`。运行时代码在 `%USERPROFILE%\.xiangsu-mcp-plus-win\editor-plugin\0.1.2\<构建号>\`。不要为了让窗口出现而改用户主目录的 `package.json`。stdio 即使设置了别的 `XIANGSU_MCP_PLUS_STATE`，也会读取默认主目录里的实例文件。同一个 pid 在两个目录里都有活记录且端口或令牌不同时，服务拒绝选择。
+插件目录是 `%LOCALAPPDATA%\DouyinAR\Plugins\v9.8.3\Local\XiangsuMcpPlus@0.1.3`。运行时代码在 `%USERPROFILE%\.xiangsu-mcp-plus-win\editor-plugin\0.1.3\<构建号>\`。不要为了让窗口出现而改用户主目录的 `package.json`。stdio 即使设置了别的 `XIANGSU_MCP_PLUS_STATE`，也会读取默认主目录里的实例文件。同一个 pid 在两个目录里都有活记录且端口或令牌不同时，服务拒绝选择。
 
 `features.project` 在类直接导出（`Project.prototype.isProjectChanged`）或 9.8.3 命名空间（`Project.Project.prototype.isProjectChanged`）时可以为真；两条都没有、也没有已打开工程上的实例方法时仍为假。关闭还要求插件方法和官方 `project_status` 的 `is_changed` 都是 `false`，并且官方 `scene_dirty` 不是 `true`。这还不是编辑器验收，装完要重新打开可丢弃窗口后再看 `ext_status`。
+
+0.1.3 的插件 RPC 每次单独连接（`Connection: close`），避免复用一条已经被对端关掉的 keep-alive 连接。失败时工具文本是 `PLUGIN_RPC_FAILED(<方法>): fetch failed (<原因码>)`，不再只有 `fetch failed`。插件在 `project_launch` / `project_close` 开始和正常结束时写 `rpc start` / `rpc done`，抛错时仍写 `rpc error`。日志和错误里不包含 Bearer 令牌。这次机器上的 `fetch failed` 没有留下原因码，所以还不能断定连接复用就是那次失败的原因；下一次失败应能直接看到原因码，以及请求有没有进到插件。关闭、白名单和脏状态检查没有放宽。
 
 把 stdio 服务交给 MCP 客户端时，用本机的 `node` 运行 `src/server.mjs`，工作目录是本包根目录。服务启动时会再尝试安装；安装失败只记在 `ext_status.plugin_install`，官方转发仍然可以启动。
 
@@ -155,4 +157,4 @@ npm test
 npm run pack
 ```
 
-产物在 `release/xiangsu-mcp-plus-win-0.1.2.tgz`，旁边有 `.sha256`。解压后的包包含 `scripts/install.mjs`、`scripts/uninstall.mjs`、`scripts/rollback.mjs` 和 `src/server.mjs`。包里没有官方程序、素材或令牌。
+产物在 `release/xiangsu-mcp-plus-win-0.1.3.tgz`，旁边有 `.sha256`。解压后的包包含 `scripts/install.mjs`、`scripts/uninstall.mjs`、`scripts/rollback.mjs` 和 `src/server.mjs`。包里没有官方程序、素材或令牌。

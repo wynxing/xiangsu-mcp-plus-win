@@ -57,6 +57,8 @@ MCP 客户端 --stdio--> src/server.mjs
 
 连接失败且请求还没写出：`OfficialUnreachable`，这次调用没有发出。连接之后的传输错误：丢掉客户端，抛出带 `ambiguous` 的错误，**不重试**。协议错误（`McpError`）是官方的答复，也不重试。下一次用户主动调用才会重新连接。`watch` 只在断开时重试连接和 `tools/list`，不调用业务工具。
 
+插件 RPC 使用 `http://127.0.0.1:<端口>/rpc`，并带 `Connection: close`，不把上一次调用的 keep-alive 套接字留给下一次。传输失败变成 `PLUGIN_RPC_FAILED(<方法>): <message> (<cause.code 或 name>)`。`project_launch` 和 `project_close` 在插件里先写 `rpc start`，成功结束写 `rpc done`，抛错写 `rpc error`。这些日志不包含令牌。一次机器上的 `project_new` 只返回了 `fetch failed`，请求有没有到达插件无法从那份日志判断；0.1.3 让下一次失败带上原因码。没有因此重试 `project_launch`。
+
 ## 安装与权限
 
 探测顺序：`XIANGSU_EDITOR_EXE`、`XIANGSU_EDITOR_ROOT`、正在运行的 `Douyin AR.exe` 或 `orionkit.exe`、然后是 LocalAppData / Program Files 下的 `Douyin AR`。显式根目录不合法时不会退回到别的候选。产品资源目录是产品根下的 `Resources`。把根指到 `electron` 子目录时，若父目录才有成对的 exe 和 `Resources`，会走到父目录，避免把 Electron 自己的 `Resources` 当成编辑器资源。

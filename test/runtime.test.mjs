@@ -40,6 +40,13 @@ test('loopback token RPC redacts secrets and rejects a bad token', async () => {
   assert.equal(body.value.ok, false);
   assert.equal(body.value.features.project, false);
   assert.equal(JSON.stringify(body).includes(rt.token), false);
+  rt.library.projectLaunch = async () => ({ requested: 'createNew' });
+  const launched = await fetch(`http://127.0.0.1:${port}/rpc`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${rt.token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ method: 'project_launch', params: { operation: 'createNew' } }),
+  });
+  assert.equal((await launched.json()).ok, true);
   rt.library.projectClose = async () => {
     throw Error(`failed with ${rt.token} and Bearer ${rt.token}`);
   };
@@ -52,6 +59,9 @@ test('loopback token RPC redacts secrets and rejects a bad token', async () => {
   assert.equal(leakedText.includes(rt.token), false);
   const log = fs.readFileSync(path.join(state, 'logs', 'plugin.log'), 'utf8');
   assert.equal(log.includes(rt.token), false);
+  assert.match(log, /rpc start project_launch/);
+  assert.match(log, /rpc done project_launch/);
+  assert.match(log, /rpc start project_close/);
   rt.stop();
 });
 
