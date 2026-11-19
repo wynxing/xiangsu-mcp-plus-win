@@ -22,7 +22,11 @@ MIT。版权与归属见 [LICENSE](LICENSE) 和 [NOTICE](NOTICE)。
 - 已有工程窗口时：`project_open` / `project_new` / `project_close`。
 - 没有工程窗口时：明确返回 `WINDOWS_COLD_START_UNVERIFIED`。本版不会去启动 `Douyin AR.exe`。
 
-曲库和图标工具没有注册。`ext_status` 里的 `features.music` / `features.icon` 只是诊断。
+曲库工具没有注册。`features.music` 只是诊断，缺曲库模块不会把 `features.project` 判失败。
+
+`icon_set` 和 `icon_open` 已注册，但还没有在像塑 9.8.3 里读回。多个工程窗口时必须给出 `project_path` 或 `instance_id`。插件先做 `features.icon` 自检，缺模块就失败，工程开关仍可用。`icon_set` 先在本机做成 360×360 的新 PNG，再交给那个窗口写到编辑器报告的图标路径并上传一次。上传返回值不是 `true`、或请求断线、超时时，不自动再传，也不把结果说成成功。这不是提交审核：不勾协议、不点提交、不发布、不调用付费生成。`icon_open` 只调用 `showIconCreationWindow`，不声称窗口已经可见，也不去最小化。
+
+360×360 的图标图由 `src/icon-image.mjs` 在本机生成。它按文件头识别 png、jpeg、gif、webp，先按 EXIF 转正，再按较短边裁出正方形（左/上偏移是 `floor((源边 - 边长) / 2)`，多出来的一像素留在右侧或下侧），然后用 lanczos3 缩放到 360 的新 PNG。小于 360 的图会放大，不留边。源文件不改。不调用 macOS `sips`。
 
 ## 环境
 
