@@ -22,7 +22,7 @@ MIT。版权与归属见 [LICENSE](LICENSE) 和 [NOTICE](NOTICE)。
 - 已有工程窗口时：`project_open` / `project_new` / `project_close`。
 - 没有工程窗口时：明确返回 `WINDOWS_COLD_START_UNVERIFIED`。本版不会去启动 `Douyin AR.exe`。
 
-曲库工具已注册，还没有在像塑里验收。`music_categories`、`music_list`、`music_search` 返回 `category_code` 或 `music_id`，以及可原样交回 `music_apply` 的 `selection`（`source`、`category_code` 或 `query`、`page_cursor`）。`music_apply` 只按这个 `music_id` 再读同一页，调用一次 `setDouyinMusicInfo`，不把本地音频文件导进工程。`imported` 为真只表示这次调用前不存在的 `Assets/NoImportAsset/<music_id>/MusicInfo.json` 在调用后作为普通文件出现在同一工程里，标题在两边都非空时一致。`confirmed` 和 `bound` 仍为假，`binding` 为 `unconfirmed`。调用前已有的文件、同标题的另一条 id、符号链接、跑出工程的路径、或调用期间工程路径改变，都不是这次导入，也不是当前绑定。写完读不到、对不上、或调用中断，都不会再发一次。多个窗口时曲库工具也要 `project_path` 或 `instance_id`。`music_apply` 沿用当时的允许/拒绝路径规则，并要求插件路径和官方实例路径仍是同一个工程。`features.music` 为假时曲库工具失败，不把 `features.project` 判失败。
+曲库工具已注册。9.8.3 上只核对过设计说明里那一条可丢弃工程的导入、保存和 `music_verify`，不是全部曲库验收。`music_categories`、`music_list`、`music_search` 返回 `category_code` 或 `music_id`，以及可原样交回 `music_apply` 的 `selection`（`source`、`category_code` 或 `query`、`page_cursor`）。`music_apply` 只按这个 `music_id` 再读同一页，调用一次 `setDouyinMusicInfo`，不把本地音频文件导进工程。`imported` 为真只表示这次调用前不存在的 `Assets/NoImportAsset/<music_id>/MusicInfo.json` 在调用后作为普通文件出现在同一工程里，标题在两边都非空时一致。`confirmed` 和 `bound` 仍为假，`binding` 为 `unconfirmed`。调用前已有的文件、同标题的另一条 id、符号链接、跑出工程的路径、或调用期间工程路径改变，都不是这次导入，也不是当前绑定。写完读不到、对不上、或调用中断，都不会再发一次。多个窗口时曲库工具也要 `project_path` 或 `instance_id`。`music_apply` 沿用当时的允许/拒绝路径规则，并要求插件路径和官方实例路径仍是同一个工程。`features.music` 为假时曲库工具失败，不把 `features.project` 判失败。
 
 `icon_set` 和 `icon_open` 已注册，但还没有在像塑 9.8.3 里读回。多个工程窗口时必须给出 `project_path` 或 `instance_id`。插件先做 `features.icon` 自检，缺模块就失败，工程开关仍可用。`icon_set` 先在本机做成 360×360 的新 PNG，再交给那个窗口写到编辑器报告的图标路径并上传一次。上传返回值不是 `true`、或请求断线、超时时，不自动再传，也不把结果说成成功。这不是提交审核：不勾协议、不点提交、不发布、不调用付费生成。`icon_open` 只调用 `showIconCreationWindow`，不声称窗口已经可见，也不去最小化。
 
@@ -118,6 +118,8 @@ node scripts\install.mjs
 0.1.10 增加只读的 `music_verify`。它不调用 `setDouyinMusicInfo`，也不保存工程。用户自己用官方工具保存之后，可以用当前 `project_id`、`music_id` 和资源的标题、作者、时长再读一次。只有已保存的 `soundID`、`MusicInfo.json` 和场景里唯一的「抖音音乐」音频组件都对上，才返回 `persisted`、`confirmed`、`bound` 为真，并且 `imported` 仍为假。未保存、旧 `soundID`、旧资源或工程身份变了，都保持未确认。`music_apply` 的语义不变。
 
 0.1.11 只改 stdio 对 `Assets/main.scene` 的识别。9.8.3 把音频组件写成 `DynamicComponent`，`name` 或 `className` 为 `AudioComponent`。身份、dirty、`soundID` 和元数据门没有放宽。`editor-plugin` 源码没有改。安装器仍按包版本比较：0.1.11 与已安装的 0.1.10 版本不同，所以启动服务时会替换插件目录并把 `requires_window_reopen` 设为真。这个标记来自版本号，不是插件逻辑变化。`music_verify` 在 stdio 进程里执行，不需要为这次修复重开已经打开的工程窗口。
+
+9.8.3 上已经核对的只是一条可丢弃工程，不是全部 `editor_acceptance`。实测包头是 `77132ee05f80aede42d62feb20c91e019c092fef`。stdio 报 0.1.11；当时打开的窗口仍加载构建号同为 `75e612dc2c038b4c` 的 0.1.10 插件，9 个插件源文件字节相同。磁盘上被写成 0.1.11 目录，不等于该窗口已加载另一份逻辑。重开窗口可能让工程自动变脏，而文件哈希不变；要确认已保存的曲目，先明确官方保存一次，等官方和插件都干净，再 `music_verify`。这次干净后的正例是 `persisted`、`confirmed`、`bound` 为真，`imported` 为假，`reason` 为 `PERSISTED`。错误曲目 id 是 `SOUND_ID_MISMATCH`，错误工程 id 是 `PROJECT_ID_MISMATCH`。0.1.9 上同一轮记录还有两轮新建、关闭、打开，一次图标上传，以及一次 apply 后的明确保存。plus 仍不自己启动编辑器。早先一次 `project_new` 在 `project_launch` 之后断开，原因还不知道。`ext_status` 里的 `editor_acceptance` 仍是 `unverified`。细节在 `docs/DESIGN.md`。
 
 把 stdio 服务交给 MCP 客户端时，用本机的 `node` 运行 `src/server.mjs`，工作目录是本包根目录。服务启动时会再尝试安装；安装失败只记在 `ext_status.plugin_install`，官方转发仍然可以启动。
 

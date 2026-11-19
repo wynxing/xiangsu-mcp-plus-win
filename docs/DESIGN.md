@@ -109,9 +109,23 @@ Windows 上不从 `PATH` 找这两个程序。`SystemRoot`（没有则 `WINDIR`�
 - 像塑 9.8.3 是否会加载带 CommonJS 边界的 `index.js`。Node 已复现祖先 `"type": "module"` 下裸 `index.js` 的 `ReferenceError`，以及边界文件让 `import()` 和 `require()` 都得到插件类。这还不是编辑器验收。
 - `OpenProjectFromEditCommand`、`Project.unload` 在 Windows 9.8.3 上是否还是这些模块路径
 - 官方 `17320` 的实时工具列表和 `generation` 字段
-- 无窗口启动编辑器的安全命令
+- 无窗口启动编辑器的安全命令。plus 自己冷启动仍未实现。用户完全退出后用桌面快捷方式打开，再由 `ext_status` 发现窗口，是用户启动，不是这个工具启动。
 - Orion 最小化 / 不抢焦点
-- 曲库绑定和图标上传在像塑窗口里的读回
+- 一次 `project_new` 在 `project_launch` 成功之后 stdio 断开的进程退出原因。后来有完整的 new、close、open，不能把那次断线写成已经修好。`logs/stdio.log` 里没有后续行，只是线索。
+
+## 9.8.3 上已经看到的范围
+
+下面只覆盖一次可丢弃工程上的这些调用。`ext_status.contract.editor_acceptance` 仍是 `unverified`。合同 CI 仍是 `npm test`。不要把这一段写成全部编辑器验收。
+
+实测包是 `77132ee05f80aede42d62feb20c91e019c092fef` 的 `xiangsu-mcp-plus-win-0.1.11.tgz`，SHA-256 `fd2246329ae9ccda8d6e40a6f3d5320d74b8c1aee88aa70d213c8e7023f6128d`。stdio 进程报 0.1.11。打开中的窗口当时仍加载 0.1.10 插件，构建号同为 `75e612dc2c038b4c`，`editor-plugin` 的 9 个源文件字节相同。服务启动时按包版本把磁盘插件目录写成 0.1.11，并曾把 `requires_window_reopen` 标成真。没有按这个标记重开窗口。磁盘上出现 0.1.11 目录，不等于该窗口已经加载了另一份插件逻辑。
+
+重开窗口曾让官方 `is_changed` 和插件未保存标记变成真，而 `effect.dyehpj` 与 `main.scene` 的内容哈希没有变。dirty 门因此返回 `UNSAVED`，并且当时不读磁盘曲目。要核对持久化绑定，先做一次明确的官方 `save_project`，等官方和插件都重新干净，再调用 `music_verify`。`music_verify` 自己不保存，也不调用 `setDouyinMusicInfo`。
+
+在那次明确保存之后、窗口保持干净时，`music_verify` 对 `music_id` `7381809852086241292`、`project_id` `28829cb5-2b74-2d65-111c-b0d9bf8e79e8` 返回 `persisted`、`confirmed`、`bound` 为真，`imported` 为假，`saved` 为真，`binding` 为 `persisted`，`scene_objects` 与 `official_scene_objects` 都是 1，`apply_calls` 与 `save_calls` 都是 0，`reason` 为 `PERSISTED`。错误 `music_id` 返回 `SOUND_ID_MISMATCH`。错误 `project_id` 返回 `PROJECT_ID_MISMATCH`。这三次前后相关文件的哈希和 mtime 没有变。`dyehpj` 哈希是 `878ea5e60696919b2f81a0cc2b2d7448aead0c72db65347fd23ff48fb3c20594`。
+
+同一条较早的可丢弃工程记录里：0.1.9 有两轮 `project_new`、`project_close`、`project_open` 成功；`icon_set` 一次写出两张 360×360 PNG，SHA-256 `6e8b14fc1cff39aebe18adc6b43187a229c4c983bd69bda095a22bea260b09bc`；`music_apply` 一次返回 `imported` 为真、`confirmed` 与 `bound` 为假，随后一次明确的官方保存才把 `soundID` 写进 `effect.dyehpj`。这些不是 `music_verify` 的自动保存，也不是再一次 apply。
+
+仍未覆盖：plus 自己启动编辑器、断线根因、重开后不保存就确认绑定、以及这份记录以外的工程或编辑器版本。
 
 ## 图标图（本地）与图标工具（合同测试，编辑器未验收）
 
@@ -135,6 +149,6 @@ Windows 上不从 `PATH` 找这两个程序。`SystemRoot`（没有则 `WINDIR`�
 
 ## 还没在编辑器里做完的
 
-1. 曲库工具已经注册。编辑器验收仍待做：先看可丢弃窗口的 `features.music`，再按 README 的曲库步骤核对读回。模块路径与上游 `REQUIRED.music` 相同。
-2. 图标工具已经注册。本地 360×360 制作和合同测试不能代替像塑 9.8.3 的读回。
-3. 不代勾协议，不点提交审核，不调用付费生成。
+1. 上面那一次 9.8.3 记录没有覆盖全部曲库路径。`music_apply` 的导入语义、搜索分页、分类列表和失败后再试，仍不要写成普遍验收。
+2. 图标那一次是同一可丢弃工程上的单次 `icon_set` 和随后的官方保存。`icon_open` 是否让窗口出现，以及别的图片，还没有这份记录。
+3. 不代勾协议，不点提交审核，不调用付费生成。plus 不自己启动编辑器。
