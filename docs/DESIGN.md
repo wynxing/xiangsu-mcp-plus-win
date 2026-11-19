@@ -25,7 +25,7 @@ MCP 客户端 --stdio--> src/server.mjs
 
 - 无窗口冷启动没有可核对的 Windows 命令。笔记里的 `open -g -b com.ies.dyeh` 是 macOS 的。直接把 `.dyehpj` 交给 `Douyin AR.exe` 没有被验证，所以 `project_open` / `project_new` 在零窗口时返回 `WINDOWS_COLD_START_UNVERIFIED`，不创建进程。
 - 不移植 `lsappinfo`、`open -b`、最小化或激活。打开的窗口可能到前台。不用键鼠把焦点抢回来。
-- 进程身份不用 `ps -o lstart`。Windows 用 `Win32_Process.CreationDate`，Linux 用 `/proc/<pid>/stat` 第 22 字段（`comm` 之后的下标 19）和 `/proc/stat` 的 `btime`。允许约 5 秒时钟偏差。查不到启动时间是错误，不是「没有窗口」。
+- 进程身份不用 `ps -o lstart`。Windows 用 `Win32_Process.CreationDate`，Linux 用 `/proc/<pid>/stat` 第 22 字段（`comm` 之后的下标 19）和 `/proc/stat` 的 `btime`。允许约 5 秒时钟偏差。查不到启动时间是错误，不是「没有窗口」。`powershell.exe` 用 `SystemRoot` 下的绝对路径，不用 `PATH`。找不到时启动时间检查失败，进程发现退回其它候选，不把缺少二进制当成空窗口列表。
 - 插件版本目录用包版本，不再像上游那样把清单固定成 `0.3.0`、包版本却是 `0.9.0`。
 - 状态目录默认是 `~/.xiangsu-mcp-plus-win`，避免和 macOS 版的 `~/.xiangsu-mcp-plus` 混用令牌。仍可用 `XIANGSU_MCP_PLUS_STATE` 覆盖。
 - `FileVersion` 的第四段可以超过 16 位，所以读版本资源里的字符串，不用 `VS_FIXEDFILEINFO` 的高低字，也不读 `electron\version`。
@@ -36,8 +36,8 @@ MCP 客户端 --stdio--> src/server.mjs
 
 沿用上游已经在 macOS 上走通的编辑器内部调用，并保持失败码：
 
-- 打开：`OpenProjectFromEditCommand('openLocal', 绝对路径)`。首页进程决定新窗口还是空闲进程。`reuseCurrent` 视为 `WINDOW_LIMIT`，避免把工程换进当前窗口。
-- 新建：`createNew`，等到路径里出现 `ProjectCreatedTmp`，再调用官方 `save_project` **一次**（`intention` 为「新建工程首次保存」）。目标已存在且非空目录则 `TARGET_NOT_EMPTY`，此时不调用保存，也不创建目录。
+- 打开：`OpenProjectFromEditCommand('openLocal', 绝对路径)`。这是编辑器自己的 `launchProject` 同一请求，9.8.1 起首页进程只认它。首页进程决定新窗口还是空闲进程。没有插件进程时不启动编辑器，也不把文件关联当成打开。已有工程的窗口若收到 `reuseCurrent`，仍是 `WINDOW_LIMIT`，避免把工程换进去。没有活动工程的空闲进程收到 `reuseCurrent` 时，等这个 pid 读回目标路径。
+- 新建：`createNew`，等到恰好一个窗口的路径里出现 `ProjectCreatedTmp`，再调用官方 `save_project` **一次**（`intention` 为「新建工程首次保存」）。空闲进程自己变成这个临时工程，或另出现一个新 pid，两者都可以；同时出现则 `AMBIGUOUS_NEW_WINDOW`，不保存。已有工程的窗口不能变成这次新建的结果。目标已存在且非空目录则 `TARGET_NOT_EMPTY`，此时不调用保存，也不创建目录。
 - 关闭：`features.project` 承认两种导出。旧版 `Project` 就是类，方法在 `Project.prototype.isProjectChanged`。像塑 9.8.3 的 `Project` 是命名空间，类在 `Project.Project`，方法在 `Project.Project.prototype.isProjectChanged`。两条原型都没有、并且没有已打开工程实例上的 `isProjectChanged` 函数时，`features.project` 仍为假。没有活动工程、方法不是函数，或返回值不是布尔值，都是 `UNKNOWN_DIRTY_STATE`。`changed === true` 时拒绝，不再把 `discard_changes` 当成插件侧脏状态的放行条件。通过之后延迟 300 ms，再读一次插件状态，并再读一次官方 `project_status`。官方读失败、`is_changed` 不是 `false`、或 `scene_dirty === true`，都拒绝。`scene_dirty === false` 不能单独证明干净。官方路径、pid、generation 必须和插件窗口一致。只有插件 `isProjectChanged() === false` 且官方 `is_changed === false`（`scene_dirty` 也是布尔值且不是 `true`）才调用命名空间上的 `Project.unload()`，不改走 `Project.Project.unload()`。失败不会在 `catch` 里改走退出。没有 `taskkill`，没有重启编辑器。
 - 同一窗口上的打开、新建、关闭串行。不同窗口可以并行。窗口上限按 2 预检，最终仍以首页进程的 `WINDOW_LIMIT` 为准。
 - 多个窗口时必须给出 `project_path` 或 `instance_id`。路径比较在 Windows 上忽略大小写和斜杠，并做 NFC。
@@ -45,7 +45,7 @@ MCP 客户端 --stdio--> src/server.mjs
 - 关窗时插件路径必须能读到，并且和官方 `list_instances` 里同一 pid 的路径一致。读不到、对不上，或官方列表读失败，都不调用 `project_close`。
 - `project_new` 先在状态目录里用独占创建占用目标路径的锁文件，进程退出或锁文件里的 pid 已死才能接手；活着的 pid 不会被抢走。这个锁不在用户工程目录里，释放或替换过期锁不会删除目标目录。同一进程里还有一把内存锁。空目录检查在两把锁之内做，后一次紧挨着 `save_project`。
 
-新建窗口必须是本次 `project_launch` 之后新出现的 pid。启动前已经登记过的实例，即使当时没有答上 `status`、之后才报出 `ProjectCreatedTmp`，也不是这次新建的结果。同时出现两个新的临时窗口，或者编辑器明确返回的 pid 对不上，返回 `AMBIGUOUS_NEW_WINDOW`，不调用 `save_project`。官方实例的 `project_path` 必须等于插件上报的临时路径，两者都不在黑名单里。发起新建的窗口必须仍显示原来的已允许工程。
+已有工程的窗口发起新建时，结果必须是本次 `project_launch` 之后新出现的 pid，且该窗口仍显示原来的工程。空闲进程（插件已连接、没有工程路径）发起时，结果可以是它自己或一个新 pid，但只能有一个 `ProjectCreatedTmp`。启动前已经登记、并且当时已有工程路径的实例，即使当时没有答上 `status`、之后才报出 `ProjectCreatedTmp`，也不是这次新建的结果。同时出现两个新的临时窗口，或者编辑器明确返回的 pid 对不上，返回 `AMBIGUOUS_NEW_WINDOW`，不调用 `save_project`。官方实例的 `project_path` 必须等于插件上报的临时路径，两者都不在黑名单里。多个空闲进程是 `AMBIGUOUS_IDLE_WINDOW`，不挑选。
 
 关闭要求官方 `list_instances` 里存在同一个 pid，且路径与插件路径一致。官方列表是空的、没有这个 pid，或路径不一致，都是 `OFFICIAL_INSTANCE_UNCONFIRMED`，不调用 `project_close`。
 
@@ -87,6 +87,8 @@ Windows 上不从 `PATH` 找这两个程序。`SystemRoot`（没有则 `WINDIR`�
 - 曲库模块缺失不单独把 project 判失败，同时 `features.music === false`
 - 令牌不进 401 响应、错误和日志；错误回显里的 Bearer 会被抹掉
 - 精简 `PATH` 下仍用 `SystemRoot` 绝对路径调用 `whoami.exe` / `powershell.exe`；找不到就 `ACL_FAILED`，令牌文件删除
+- 进程启动时间和正在运行的编辑器发现也用这条绝对路径；二进制缺失不是空窗口列表
+- 空闲工程进程可以发起打开和新建；结果是读回路径的那个 pid，可以是它自己或新进程。已有工程的窗口不会被换掉
 - 插件启动的异步失败写入 `logs/plugin.log` 的 `init failed`，不留下未处理拒绝
 - pid 启动时间晚于记录则丢弃；进程已退出则丢弃；启动时间查询失败不是空列表
 - 重复打开不发 `project_launch`；非空目标不发 `save_project`；保存断线只调用一次

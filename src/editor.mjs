@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { readFileVersion, shortEditorVersion } from './peversion.mjs';
+import { windowsExe } from './private-file.mjs';
 
 export const EXE_NAME = 'Douyin AR.exe';
 
@@ -117,11 +118,17 @@ export function discoverEditor({
   throw Error(`EDITOR_NOT_FOUND: ${checked.join('; ') || 'no candidates'}. Set XIANGSU_EDITOR_ROOT to the product root that contains Resources.`);
 }
 
-export function runningEditorExes({ execFile = execFileSync, platform = process.platform } = {}) {
+export function runningEditorExes({ execFile = execFileSync, platform = process.platform, env, existsSync, systemRoot } = {}) {
   if (platform !== 'win32') return [];
+  let exe;
+  try {
+    exe = windowsExe('powershell.exe', { env, existsSync, systemRoot });
+  } catch {
+    return [];
+  }
   const script = `Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('Douyin AR.exe','orionkit.exe') -and $_.ExecutablePath } | ForEach-Object { $_.ExecutablePath }`;
   try {
-    const stdout = execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+    const stdout = execFile(exe, ['-NoProfile', '-NonInteractive', '-Command', script], {
       encoding: 'utf8',
       windowsHide: true,
     });

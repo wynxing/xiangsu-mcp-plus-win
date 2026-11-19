@@ -92,6 +92,87 @@ test('an already open project is returned without launch', async () => {
   assert.equal(calls.some((call) => call[1] === 'project_launch'), false);
 });
 
+test('an idle window can host project_new in the same process', async () => {
+  const { d, calls, windows } = world({ paths: [[100, null]] });
+  const temp = path.join(tmpdir('xs-tmp-'), 'ProjectCreatedTmp', '未命名');
+  d.callPlugin = async (method, params, opts) => {
+    calls.push(['plugin', method, params, opts.pid]);
+    if (method === 'status') return { projectPath: windows.get(opts.pid) ?? null };
+    if (method === 'project_state') return { project_path: windows.get(opts.pid) ?? null, changed: false, scene_ready: true };
+    if (method === 'project_launch' && params.operation === 'createNew') {
+      assert.equal(opts.pid, 100);
+      windows.set(100, temp);
+      return { requested: 'createNew', reused_current: true, created_pid: 100 };
+    }
+    return {};
+  };
+  const target = path.join(tmpdir('xs-new-'), '空白');
+  const out = await new Projects(d).create({ path: target });
+  assert.equal(out.pid, 100);
+  assert.equal(out.project_path, target);
+  assert.equal(out.save_calls, 1);
+  assert.equal(calls.filter((call) => call[1] === 'save_project').length, 1);
+  assert.equal(windows.get(100), target);
+});
+
+test('an idle window can open a project in a new process without a second click', async () => {
+  const occupied = path.join(tmpdir('xs-keep-'), 'keep');
+  const { d, calls, windows } = world({ paths: [[100, occupied], [101, null]] });
+  const dir = projectDir();
+  d.callPlugin = async (method, params, opts) => {
+    calls.push(['plugin', method, params, opts.pid]);
+    if (method === 'status') return { projectPath: windows.get(opts.pid) ?? null };
+    if (method === 'project_state') return { project_path: windows.get(opts.pid) ?? null, changed: false, scene_ready: true };
+    if (method === 'project_launch' && params.operation === 'openLocal') {
+      assert.equal(opts.pid, 101);
+      windows.set(200, params.path);
+      return { requested: 'openLocal', created_pid: 200 };
+    }
+    return {};
+  };
+  const out = await new Projects(d).open({ path: dir });
+  assert.equal(out.pid, 200);
+  assert.equal(windows.get(100), occupied);
+  assert.equal(calls.filter((call) => call[1] === 'project_launch').length, 1);
+});
+
+test('an idle window that itself receives the opened project is the result', async () => {
+  const { d, windows } = world({ paths: [[100, null]] });
+  const dir = projectDir();
+  d.callPlugin = async (method, params, opts) => {
+    if (method === 'status') return { projectPath: windows.get(opts.pid) ?? null };
+    if (method === 'project_state') return { project_path: windows.get(opts.pid) ?? null, changed: false, scene_ready: true };
+    if (method === 'project_launch' && params.operation === 'openLocal') {
+      windows.set(100, params.path);
+      return { requested: 'openLocal', reused_current: true };
+    }
+    return {};
+  };
+  const out = await new Projects(d).open({ path: dir });
+  assert.equal(out.already_open, false);
+  assert.equal(out.pid, 100);
+  assert.equal(out.project_path, dir);
+});
+
+test('two idle windows are not guessed, and a new temp plus the idle window is not saved', async () => {
+  const idle = world({ paths: [[100, null], [101, null]] });
+  await assert.rejects(new Projects(idle.d).create({ path: path.join(tmpdir('xs-new-'), 'n') }), /AMBIGUOUS_IDLE_WINDOW/);
+  assert.equal(idle.calls.some((call) => call[1] === 'project_launch'), false);
+
+  const { d, calls, windows } = world({ paths: [[100, null]] });
+  const base = d.callPlugin;
+  d.callPlugin = async (method, params, opts) => {
+    if (method === 'project_launch' && params.operation === 'createNew') {
+      windows.set(100, path.join(tmpdir('xs-a-'), 'ProjectCreatedTmp', 'a'));
+      windows.set(201, path.join(tmpdir('xs-b-'), 'ProjectCreatedTmp', 'b'));
+      return { requested: 'createNew' };
+    }
+    return base(method, params, opts);
+  };
+  await assert.rejects(new Projects(d).create({ path: path.join(tmpdir('xs-probe-'), 'n') }), /AMBIGUOUS_NEW_WINDOW/);
+  assert.equal(calls.some((call) => call[1] === 'save_project'), false);
+});
+
 test('no project window is an explicit unsupported cold start and spawns nothing', async () => {
   const { d, calls } = world();
   d.listInstances = () => [];

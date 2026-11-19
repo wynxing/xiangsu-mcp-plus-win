@@ -3,6 +3,16 @@
 // macOS `ps -o lstart` is not used.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import { windowsExe } from './private-file.mjs';
+
+function powershellExe(options) {
+  try {
+    return windowsExe('powershell.exe', options);
+  } catch (e) {
+    const detail = String((e && e.message) || e).replace(/^ACL_FAILED:\s*/, '');
+    throw Error(`PROCESS_START_CHECK_FAILED: ${detail}`);
+  }
+}
 
 const SKEW_MS = 5000;
 
@@ -61,16 +71,18 @@ export function linuxStartTimes(pids, { readFileSync = fs.readFileSync } = {}) {
   return times;
 }
 
-export function windowsStartTimes(pids, { execFile = execFileSync } = {}) {
+export function windowsStartTimes(pids, options = {}) {
+  const { execFile = execFileSync } = options;
   const ids = [...new Set(pids.map((pid) => Number(pid)).filter((pid) => Number.isInteger(pid) && pid > 0))];
   if (!ids.length) return new Map();
   const script = `$ids = @(${ids.join(',')})
 Get-CimInstance Win32_Process | Where-Object { $ids -contains $_.ProcessId } | ForEach-Object {
   '{0}\t{1}' -f $_.ProcessId, $_.CreationDate.ToUniversalTime().ToString('o')
 }`;
+  const exe = powershellExe(options);
   let stdout;
   try {
-    stdout = execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+    stdout = execFile(exe, ['-NoProfile', '-NonInteractive', '-Command', script], {
       encoding: 'utf8',
       windowsHide: true,
     });

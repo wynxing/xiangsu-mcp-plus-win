@@ -91,6 +91,15 @@ test('music and icon gaps are diagnostic and do not by themselves fail the proje
   assert.deepEqual(check.not_enabled, ['music', 'icon']);
 });
 
+test('reuseCurrent from an idle window is readable, and from a window with a project is still refused', async () => {
+  const idle = editor({ active: false, launch: { status: 'reuseCurrent', processCount: 1 } });
+  const out = await idle.lib.projectLaunch({ operation: 'createNew' });
+  assert.equal(out.reused_current, true);
+  assert.equal(out.created_pid, null);
+  const occupied = editor({ launch: { status: 'reuseCurrent', processCount: 2 } });
+  await assert.rejects(occupied.lib.projectLaunch({ operation: 'createNew' }), /WINDOW_LIMIT/);
+});
+
 test('project_launch refuses a reuse answer and project_close refuses dirty or unknown state', async () => {
   const limit = editor({ launch: { status: 'reuseCurrent', processCount: 2 } });
   await assert.rejects(limit.lib.projectLaunch({ operation: 'createNew' }), /WINDOW_LIMIT/);

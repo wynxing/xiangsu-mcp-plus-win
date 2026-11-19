@@ -1,6 +1,10 @@
-// Open, create and close project windows through an already-open editor window.
-// There is no verified Windows command that opens a .dyehpj without a project window,
-// so that case is refused instead of launching Douyin AR.exe.
+// Open, create and close project windows through a project process that already
+// has the plugin loaded. Zero such processes is still a cold start: there is no
+// verified Windows command that starts Douyin AR, and file association does not
+// load a project. An idle project process (plugin connected, no project path)
+// can send OpenProjectFromEditCommand. The home process may host the result in
+// that process or in a new one. A process that already shows a project is not
+// the place the new project is loaded into.
 // Focus stealing, minimize, and keyboard/mouse input are not used.
 //
 // Lifecycle contracts adapted from Muqian-Sun/xiangsu-mcp-plus src/projects.mjs
@@ -18,7 +22,7 @@ export const COLD_START = Object.freeze({
   supported: false,
   code: 'WINDOWS_COLD_START_UNVERIFIED',
   detail:
-    'No verified Windows invocation opens a .dyehpj without an existing project window. This build does not start Douyin AR.exe. Open any project window (the plugin loads only in windows opened after install) and retry.',
+    'No verified Windows invocation starts the editor when no project process is running. This build does not start Douyin AR.exe and does not use file association. An idle project process with the plugin loaded can open or create; retry after that process is up.',
 });
 
 const isTempProject = (projectPath) => typeof projectPath === 'string' && projectPath.replace(/\\/g, '/').includes('/ProjectCreatedTmp/');
@@ -191,6 +195,19 @@ export class Projects {
     if (!ok) throw Error(`SCENE_NOT_READY: window ${pid} did not finish loading its scene`);
   }
 
+  pickLauncher(windows) {
+    if (!windows.length) throw Error(`NO_EDITOR_WINDOW: ${COLD_START.detail} (${COLD_START.code})`);
+    const idle = windows.filter((w) => !w.project_path);
+    if (idle.length > 1) throw Error(`AMBIGUOUS_IDLE_WINDOW: ${idle.map((w) => w.pid).join(', ')} have no project`);
+    if (idle.length === 1) return idle[0];
+    if (windows.length >= MAX_WINDOWS) {
+      throw Error(`WINDOW_LIMIT: all ${MAX_WINDOWS} project windows are in use; project_close one before opening another`);
+    }
+    if (!windows[0].project_path) throw Error('LAUNCHER_PATH_UNREADABLE: refusing to use a window whose project path cannot be read');
+    this.assertMutable(windows[0].project_path);
+    return windows[0];
+  }
+
   async open({ path: target }) {
     const abs = this.normalize(target);
     this.assertMutable(abs);
@@ -207,13 +224,8 @@ export class Projects {
         instance_id: await this.instanceIdForPid(already.pid, this.d.instanceTimeoutMs),
       };
     }
-    if (!windows.length) throw Error(`NO_EDITOR_WINDOW: ${COLD_START.detail} (${COLD_START.code})`);
-    if (windows.length >= MAX_WINDOWS) {
-      throw Error(`WINDOW_LIMIT: all ${MAX_WINDOWS} project windows are in use; project_close one before opening another`);
-    }
-    if (!windows[0].project_path) throw Error('LAUNCHER_PATH_UNREADABLE: refusing to open from a window whose project path cannot be read');
-    this.assertMutable(windows[0].project_path);
-    return this.locks.run(windows[0].pid, () => this.openLocked(abs, windows[0].pid));
+    const launcher = this.pickLauncher(windows);
+    return this.locks.run(launcher.pid, () => this.openLocked(abs, launcher.pid));
   }
 
   async openLocked(abs, pid) {
@@ -227,13 +239,29 @@ export class Projects {
         instance_id: await this.instanceIdForPid(already.pid, this.d.instanceTimeoutMs),
       };
     }
-    if (windows.length >= MAX_WINDOWS) throw Error(`WINDOW_LIMIT: all ${MAX_WINDOWS} project windows are in use; project_close one before opening another`);
+    const launcher = windows.find((w) => w.pid === pid);
+    if (!launcher) throw Error(`NO_EDITOR_WINDOW: launcher ${pid} disappeared before open`);
+    const launcherPath = launcher.project_path || null;
+    if (launcherPath && windows.length >= MAX_WINDOWS) {
+      throw Error(`WINDOW_LIMIT: all ${MAX_WINDOWS} project windows are in use; project_close one before opening another`);
+    }
     await this.launch(pid, { operation: 'openLocal', path: abs });
-    const found = await waitFor(async () => (await this.windows()).find((w) => w.project_path && this.same(w.project_path, abs)), {
-      timeoutMs: this.d.openTimeoutMs,
-      sleep: this.d.sleep,
-    });
+    const found = await waitFor(
+      async () => {
+        const matches = (await this.windows()).filter((w) => w.project_path && this.same(w.project_path, abs));
+        if (matches.length > 1) return { ambiguous: true };
+        return matches[0] || null;
+      },
+      { timeoutMs: this.d.openTimeoutMs, sleep: this.d.sleep },
+    );
     if (!found) throw Error(`OPEN_TIMEOUT: ${abs} did not finish opening; the editor may be showing a dialog that needs a click`);
+    if (found.ambiguous) throw Error('AMBIGUOUS_OPEN_WINDOW: more than one window shows the opened project');
+    if (launcherPath) {
+      const launcherNow = (await this.windows()).find((w) => w.pid === pid);
+      if (!launcherNow?.project_path || !this.same(launcherNow.project_path, launcherPath)) {
+        throw Error('LAUNCHER_PROJECT_CHANGED: the window used to open the project no longer shows its original project');
+      }
+    }
     await this.waitReady(found.pid);
     return {
       already_open: false,
@@ -257,34 +285,38 @@ export class Projects {
 
   async createHoldingTarget(abs) {
     this.assertTargetEmpty(abs);
-    const windows = await this.windows();
-    if (!windows.length) throw Error(`NO_EDITOR_WINDOW: ${COLD_START.detail} (${COLD_START.code})`);
-    if (windows.length >= MAX_WINDOWS) throw Error(`WINDOW_LIMIT: all ${MAX_WINDOWS} project windows are in use; project_close one first`);
-    const launcher = windows[0];
-    if (!launcher.project_path) throw Error('LAUNCHER_PATH_UNREADABLE: refusing to create from a window whose project path cannot be read');
-    this.assertMutable(launcher.project_path);
-    return this.locks.run(launcher.pid, () => this.createLocked(abs, launcher.pid, launcher.project_path));
+    const launcher = this.pickLauncher(await this.windows());
+    return this.locks.run(launcher.pid, () => this.createLocked(abs, launcher.pid, launcher.project_path || null));
+  }
+
+  createdWindow(now, { pid, launcherPath, beforePids, wantedPid }) {
+    const fresh = now.filter((w) => isTempProject(w.project_path) && !beforePids.has(w.pid));
+    const self = launcherPath == null ? now.find((w) => w.pid === pid && isTempProject(w.project_path)) : null;
+    const candidates = [...fresh];
+    if (self && !candidates.some((w) => w.pid === self.pid)) candidates.push(self);
+    if (candidates.length > 1) return { ambiguous: true };
+    if (Number.isInteger(wantedPid) && wantedPid > 0) {
+      if (beforePids.has(wantedPid)) {
+        if (self && self.pid === wantedPid && candidates.length === 1) return self;
+        return { ambiguous: true };
+      }
+      const hit = candidates.filter((w) => w.pid === wantedPid);
+      if (hit.length === 1) return hit[0];
+      if (candidates.length > 1) return { ambiguous: true };
+      return null;
+    }
+    return candidates.length === 1 ? candidates[0] : null;
   }
 
   async createLocked(abs, pid, launcherPath) {
     const windows = await this.windows();
-    if (windows.length >= MAX_WINDOWS) throw Error(`WINDOW_LIMIT: all ${MAX_WINDOWS} project windows are in use; project_close one first`);
+    if (!windows.some((w) => w.pid === pid)) throw Error(`NO_EDITOR_WINDOW: launcher ${pid} disappeared before create`);
+    if (launcherPath && windows.length >= MAX_WINDOWS) throw Error(`WINDOW_LIMIT: all ${MAX_WINDOWS} project windows are in use; project_close one first`);
     const beforePids = new Set(this.d.listInstances().map((record) => record.pid));
     const launched = await this.launch(pid, { operation: 'createNew' });
     const wantedPid = Number(launched?.created_pid);
     const created = await waitFor(
-      async () => {
-        const fresh = (await this.windows()).filter((w) => isTempProject(w.project_path) && !beforePids.has(w.pid));
-        if (Number.isInteger(wantedPid) && wantedPid > 0) {
-          if (beforePids.has(wantedPid)) return { ambiguous: true };
-          const hit = fresh.filter((w) => w.pid === wantedPid);
-          if (hit.length === 1) return hit[0];
-          if (fresh.length > 1) return { ambiguous: true };
-          return null;
-        }
-        if (fresh.length > 1) return { ambiguous: true };
-        return fresh.length === 1 ? fresh[0] : null;
-      },
+      async () => this.createdWindow(await this.windows(), { pid, launcherPath, beforePids, wantedPid }),
       { timeoutMs: this.d.openTimeoutMs, sleep: this.d.sleep },
     );
     if (!created) throw Error('NEW_PROJECT_TIMEOUT: no new project window appeared; save_project was not called');
@@ -296,9 +328,11 @@ export class Projects {
     }
     this.assertNotDenied(official.project_path);
     this.assertNotDenied(created.project_path);
-    const launcherNow = (await this.windows()).find((w) => w.pid === pid);
-    if (!launcherNow?.project_path || !this.same(launcherNow.project_path, launcherPath)) {
-      throw Error('LAUNCHER_PROJECT_CHANGED: the window used to create the project no longer shows its original project; save_project was not called');
+    if (launcherPath) {
+      const launcherNow = (await this.windows()).find((w) => w.pid === pid);
+      if (!launcherNow?.project_path || !this.same(launcherNow.project_path, launcherPath)) {
+        throw Error('LAUNCHER_PROJECT_CHANGED: the window used to create the project no longer shows its original project; save_project was not called');
+      }
     }
     this.assertMutable(abs);
     this.assertTargetEmpty(abs);
