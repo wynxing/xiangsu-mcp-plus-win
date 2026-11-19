@@ -147,7 +147,7 @@ node scripts/rollback.mjs --plugin-root "%LOCALAPPDATA%\DouyinAR\Plugins\v9.8.3\
 5. 用官方 `list_instances` 只读核对测试窗口。官方工具由本服务转发，断线后不会自动再发。
 6. `project_close` 只关测试窗口。读不到工程路径、路径和官方实例不一致、或不能证明没有未保存修改时都会拒绝。关窗前会再读一次脏状态；这 300 毫秒里变成了脏且没有 `discard_changes`，进程不会退出。确认别的窗口还在。
 7. `project_open` 再打开测试工程目录（里面要有 `effect.dyehpj`）。已经打开时会原样返回。
-8. `project_new` 指到一个还不存在的空目录，且不在黑名单里。若配置了白名单，目录还必须落在其中。保存前会再确认目录仍是空的，并要求官方实例路径和插件里的临时工程路径一致、都不在黑名单里。发起窗口如果本来就显示着一个工程，它必须还停在那个工程上。空闲窗口可以自己变成新建结果。对不上就不会调用 `save_project`。
+8. `project_new` 指到一个还不存在的空目录，且不在黑名单里。若配置了白名单，目录还必须落在其中。保存前会再确认目录仍是空的，并要求官方实例路径和插件里的临时工程路径一致、都不在黑名单里。发起窗口如果本来就显示着一个工程，它必须还停在那个工程上。空闲窗口可以自己变成新建结果。对不上就不会调用 `save_project`。客户端在 `project_launch` 已经返回之后断开时，结果是 `PROJECT_NEW_INTERRUPTED`，不是成功；不会补一次保存，也不会再发一次新建。阶段记在状态目录的 `logs/stdio.log`。
 9. 关掉新建窗口，删掉临时目录。不要点提交审核，不要勾选协议。
 
 没有插件进程时，`project_open` 应返回 `NO_EDITOR_WINDOW` 和 `WINDOWS_COLD_START_UNVERIFIED`，并且不会启动编辑器。只有一个空闲工程进程时，可以对一个可丢弃的空目录调用 `project_new`，再对一个含 `effect.dyehpj` 的可丢弃工程调用 `project_open`。结果里的 pid 可以是原来的空闲进程，也可以是新进程；插件路径和官方实例路径都要读回成目标路径。`PATH` 里没有 `WindowsPowerShell\v1.0` 时，`ext_status` 仍应列出这个窗口，而不是 `PROCESS_START_CHECK_FAILED`。这两步还不是已经完成的实机验收。

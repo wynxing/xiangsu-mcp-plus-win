@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { OfficialMcp } from '../src/official.mjs';
-import { createServer, dispatchTool } from '../src/server.mjs';
+import { createServer, dispatchTool, stdioPhase } from '../src/server.mjs';
 
 function officialScript(call) {
   const log = { calls: [] };
@@ -121,4 +124,22 @@ test('the stdio server lists extension tools and forwarded official tools', asyn
   const forwarded = listed.tools.find((tool) => tool.name === 'save_project');
   assert.match(forwarded.description, /not retried/);
   await client.close();
+});
+
+test('stdio phase lines go to the state log and not to the protocol stream', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xs-stdio-'));
+  const captured = [];
+  const original = process.stdout.write;
+  process.stdout.write = (chunk, ...rest) => {
+    captured.push(String(chunk));
+    return original.call(process.stdout, chunk, ...rest);
+  };
+  try {
+    stdioPhase('project_new launch_returned', { XIANGSU_MCP_PLUS_STATE: root });
+  } finally {
+    process.stdout.write = original;
+  }
+  const text = fs.readFileSync(path.join(root, 'logs', 'stdio.log'), 'utf8');
+  assert.match(text, /project_new launch_returned/);
+  assert.equal(captured.some((chunk) => chunk.includes('launch_returned')), false);
 });

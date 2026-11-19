@@ -2,6 +2,7 @@
 // stdio MCP server. Official 像塑 tools are forwarded once. This slice adds
 // ext_status, project window tools, icon tools, and the Douyin music library.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -10,7 +11,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema, McpError } from '@modelc
 import { z } from 'zod';
 import { callPlugin, listInstances } from './bridge.mjs';
 import { OfficialMcp, OfficialUnreachable } from './official.mjs';
-import { installFromEnvironment } from './plugininstall.mjs';
+import { installFromEnvironment, stateRootOf } from './plugininstall.mjs';
 import { openIcon, setIcon } from './icons.mjs';
 import { musicToolDefinitions } from './music.mjs';
 import { COLD_START, Projects } from './projects.mjs';
@@ -124,7 +125,7 @@ export function toolDefinitions() {
         'Create a blank project through a project process that already has the plugin loaded, then save it once with the official save_project tool. ' +
         'An idle process with no project can send the create. The home process may host the new project in that process or in a new one; exactly one pid must read back as ProjectCreatedTmp before save. ' +
         'A process that already shows a project must still show it afterwards. The target must be missing or an empty directory. Does not overwrite an existing directory or project. ' +
-        'A failed or disconnected save is not retried.',
+        'A failed or disconnected save is not retried. If the client connection closes after project_launch returns, save_project is not called and the call is not a success.',
       schema: z.strictObject({ path: z.string().min(1).describe('Absolute path of the folder to save the new project into.') }),
       run: async (args, _d, projects) => projects.create(args),
     },
@@ -197,17 +198,33 @@ export async function listToolDefs(d) {
   ];
 }
 
-export async function dispatchTool(d, name, args) {
+export function stdioPhase(line, env = process.env) {
+  try {
+    const file = path.join(stateRootOf(env), 'logs', 'stdio.log');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.appendFileSync(file, `[${new Date().toISOString()}] [${process.pid}] ${String(line).replace(/[\r\n]/g, ' ')}\n`);
+  } catch {
+    // A log failure must not be written to stdout. That stream is the MCP protocol.
+  }
+}
+
+export async function dispatchTool(d, name, args, extra) {
   const projects = d.projects ?? new Projects(d);
   d.projects = projects;
   const own = toolDefinitions().find((tool) => tool.name === name);
   if (own) {
     const parsed = own.schema.safeParse(args ?? {});
     if (!parsed.success) return failure(`INVALID_ARGUMENTS(${name}): ${parsed.error.message}`);
+    const previous = d.requestSignal;
+    d.requestSignal = extra?.signal;
+    d.logPhase = d.logPhase ?? stdioPhase;
     try {
       return text(await own.run(parsed.data, d, projects));
     } catch (e) {
+      stdioPhase(`tool_error ${name} ${String(e && e.message ? e.message : e).split(':')[0].slice(0, 80)}`);
       return failure(e.message);
+    } finally {
+      d.requestSignal = previous;
     }
   }
   try {
@@ -225,7 +242,7 @@ export function createServer(overrides = {}) {
   const server = new Server({ name: 'xiangsu-mcp-plus-win', version: VERSION }, { capabilities: { tools: { listChanged: true } } });
   d.official.onToolsChanged = () => server.sendToolListChanged().catch(() => {});
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: await listToolDefs(d) }));
-  server.setRequestHandler(CallToolRequestSchema, async (req) => dispatchTool(d, req.params.name, req.params.arguments ?? {}));
+  server.setRequestHandler(CallToolRequestSchema, async (req, extra) => dispatchTool(d, req.params.name, req.params.arguments ?? {}, extra));
   return server;
 }
 
@@ -239,6 +256,18 @@ function isDirect() {
 }
 
 if (isDirect()) {
+  const mark = (line) => stdioPhase(line);
+  process.stdin.on('end', () => mark('stdin end'));
+  process.once('SIGTERM', () => mark('SIGTERM'));
+  process.once('SIGINT', () => mark('SIGINT'));
+  process.on('uncaughtException', (error) => {
+    mark(`uncaught ${error && error.name ? error.name : 'Error'}`);
+    process.exit(1);
+  });
+  process.on('unhandledRejection', (error) => {
+    mark(`unhandled ${error && error.name ? error.name : 'rejection'}`);
+    process.exit(1);
+  });
   const official = new OfficialMcp();
   official.watch();
   let pluginInstall;

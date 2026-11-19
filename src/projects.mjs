@@ -308,15 +308,36 @@ export class Projects {
     return candidates.length === 1 ? candidates[0] : null;
   }
 
+  note(phase) {
+    this.d.logPhase?.(`project_new ${phase}`);
+  }
+
+  stopIfDisconnected(launched) {
+    if (!this.d.requestSignal?.aborted) return;
+    this.note(launched ? 'interrupted_after_launch' : 'interrupted_before_launch');
+    throw Error(
+      launched
+        ? 'PROJECT_NEW_INTERRUPTED: stdio connection closed after project_launch returned; save_project was not called and project_launch was not retried'
+        : 'PROJECT_NEW_INTERRUPTED: stdio connection closed before project_launch; save_project was not called',
+    );
+  }
+
   async createLocked(abs, pid, launcherPath) {
+    this.note('start');
+    this.stopIfDisconnected(false);
     const windows = await this.windows();
     if (!windows.some((w) => w.pid === pid)) throw Error(`NO_EDITOR_WINDOW: launcher ${pid} disappeared before create`);
     if (launcherPath && windows.length >= MAX_WINDOWS) throw Error(`WINDOW_LIMIT: all ${MAX_WINDOWS} project windows are in use; project_close one first`);
     const beforePids = new Set(this.d.listInstances().map((record) => record.pid));
     const launched = await this.launch(pid, { operation: 'createNew' });
+    this.note('launch_returned');
+    this.stopIfDisconnected(true);
     const wantedPid = Number(launched?.created_pid);
     const created = await waitFor(
-      async () => this.createdWindow(await this.windows(), { pid, launcherPath, beforePids, wantedPid }),
+      async () => {
+        this.stopIfDisconnected(true);
+        return this.createdWindow(await this.windows(), { pid, launcherPath, beforePids, wantedPid });
+      },
       { timeoutMs: this.d.openTimeoutMs, sleep: this.d.sleep },
     );
     if (!created) throw Error('NEW_PROJECT_TIMEOUT: no new project window appeared; save_project was not called');
@@ -336,6 +357,8 @@ export class Projects {
     }
     this.assertMutable(abs);
     this.assertTargetEmpty(abs);
+    this.stopIfDisconnected(true);
+    this.note('save_project');
     const instance_id = official.instance_id;
     let saved;
     try {
@@ -349,6 +372,7 @@ export class Projects {
       sleep: this.d.sleep,
     });
     if (!moved) throw Error(`SAVE_NOT_APPLIED: window ${created.pid} still shows ${created.project_path}`);
+    this.note('finished');
     return {
       pid: created.pid,
       instance_id,
