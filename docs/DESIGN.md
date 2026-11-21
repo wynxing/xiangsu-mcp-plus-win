@@ -37,7 +37,7 @@ MCP 客户端 --stdio--> src/server.mjs
 沿用上游已经在 macOS 上走通的编辑器内部调用，并保持失败码：
 
 - 打开：`OpenProjectFromEditCommand('openLocal', 绝对路径)`。这是编辑器自己的 `launchProject` 同一请求，9.8.1 起首页进程只认它。首页进程决定新窗口还是空闲进程。没有插件进程时不启动编辑器，也不把文件关联当成打开。已有工程的窗口若收到 `reuseCurrent`，仍是 `WINDOW_LIMIT`，避免把工程换进去。没有活动工程的空闲进程收到 `reuseCurrent` 时，等这个 pid 读回目标路径。
-- 新建：`createNew`，等到恰好一个窗口的路径里出现 `ProjectCreatedTmp`，再调用官方 `save_project` **一次**（`intention` 为「新建工程首次保存」）。空闲进程自己变成这个临时工程，或另出现一个新 pid，两者都可以；同时出现则 `AMBIGUOUS_NEW_WINDOW`，不保存。已有工程的窗口不能变成这次新建的结果。目标已存在且非空目录则 `TARGET_NOT_EMPTY`，此时不调用保存，也不创建目录。
+- 新建：`createNew`，等到恰好一个窗口的路径里出现 `ProjectCreatedTmp`，再调用官方 `save_project` **一次**（`intention` 为「新建工程首次保存」）。空闲进程自己变成这个临时工程，或另出现一个新 pid，两者都可以；同时出现则 `AMBIGUOUS_NEW_WINDOW`，不保存。已有工程的窗口不能变成这次新建的结果。目标已存在且非空目录则 `TARGET_NOT_EMPTY`，此时不调用保存，也不创建目录。客户端在 `project_launch` 返回之后断开 stdio 时，调用返回 `PROJECT_NEW_INTERRUPTED`，不调用 `save_project`，也不再发一次 `project_launch`。这次调用不是成功。阶段写在状态目录 `logs/stdio.log`（`start`、`launch_returned`、`window_seen`、`ready`、`official_matched`、`save_project`、`finished`，以及 `interrupted_after_launch`、`stdin end`、信号、未捕获错误和 `exit <code>`）。`exit <code>` 只表示 Node 执行到了 exit 事件并带上这个退出码。后面没有新行，不能单独证明进程被杀掉：这一行可能没写到磁盘，进程也可能在处理程序之外停住。这些行是下一次留存的线索，不是某一次断线的原因结论。日志不写工程路径，也不写到 stdout。
 - 关闭：`features.project` 承认两种导出。旧版 `Project` 就是类，方法在 `Project.prototype.isProjectChanged`。像塑 9.8.3 的 `Project` 是命名空间，类在 `Project.Project`，方法在 `Project.Project.prototype.isProjectChanged`。两条原型都没有、并且没有已打开工程实例上的 `isProjectChanged` 函数时，`features.project` 仍为假。没有活动工程、方法不是函数，或返回值不是布尔值，都是 `UNKNOWN_DIRTY_STATE`。`changed === true` 时拒绝，不再把 `discard_changes` 当成插件侧脏状态的放行条件。通过之后延迟 300 ms，再读一次插件状态，并再读一次官方 `project_status`。官方读失败、`is_changed` 不是 `false`、或 `scene_dirty === true`，都拒绝。`scene_dirty === false` 不能单独证明干净。官方路径、pid、generation 必须和插件窗口一致。只有插件 `isProjectChanged() === false` 且官方 `is_changed === false`（`scene_dirty` 也是布尔值且不是 `true`）才调用命名空间上的 `Project.unload()`，不改走 `Project.Project.unload()`。失败不会在 `catch` 里改走退出。没有 `taskkill`，没有重启编辑器。
 - 同一窗口上的打开、新建、关闭串行。不同窗口可以并行。窗口上限按 2 预检，最终仍以首页进程的 `WINDOW_LIMIT` 为准。
 - 多个窗口时必须给出 `project_path` 或 `instance_id`。路径比较在 Windows 上忽略大小写和斜杠，并做 NFC。
@@ -51,7 +51,9 @@ MCP 客户端 --stdio--> src/server.mjs
 
 `self_check` 强制的只有 `project`：`Project.unload`、`isProjectChanged`（类原型、9.8.3 的 `Project.Project` 原型，或已打开实例上的函数）、`ProjectManager.getInstance`、分析插件的 `flush` / `safelyExitApplication`、`OpenProjectFromEditCommand`、`EditSender.getInstance`、`SceneModule.getEditingSceneService`。缺任何一项，工程工具抛 `INCOMPATIBLE_EDITOR`。曲库工具单独调用 `ensureCompatible('music')`，缺的是 `REQUIRED.music` 里的分类、列表、搜索和 `MusicSquareManager.instance.setDouyinMusicInfo`。这一失败不改变 `features.project`。`quietWindows` 和 `icon` 仍只出现在诊断里。编辑器升级后要重跑 `ext_status`。
 
-曲目的可复用标识是 `music_id` 加 `selection`：`source`（`category` 或 `search`）、对应的 `category_code` 或 `query`，以及取出该页时用的 `page_cursor`（首页为空）。`music_apply` 用这份标识再读同一页，只接受恰好一条相同 `music_id`。标题相同但 id 不同不会绑定。写入只调用 `setDouyinMusicInfo`，结果里的 `binding` 是 `douyin_library`，`local_import` 为假。`confirmed` 为真仅当返回值或同一管理器上的 `getDouyinMusicInfo()` 读回的 id 与请求一致。返回假、id 不一致、调用抛错或读不到 id 时不再调用。`getDouyinMusicInfo` 不在 `REQUIRED.music` 里；真实编辑器若只返回 `true` 且没有这个读取函数，工具给出 `MUSIC_APPLY_UNCONFIRMED` 和当时能看到的方法名，不把这次写成成功。多个窗口必须点名。绑定前官方实例路径要和插件路径一致，并走当时的允许/拒绝名单；名单本身的默认值不在曲库里改。
+曲目的可复用标识是 `music_id` 加 `selection`：`source`（`category` 或 `search`）、对应的 `category_code` 或 `query`，以及取出该页时用的 `page_cursor`（首页为空）。`music_apply` 用这份标识再读同一页，只接受恰好一条相同 `music_id`。标题相同但 id 不同不会绑定。写入只调用 `setDouyinMusicInfo`，结果里的 `binding` 是 `douyin_library`，`local_import` 为假。搜索没有分类，第二个参数省略（`undefined`），不传 `null`。`setDouyinMusicInfo` 返回 `true` 或一个对象，只表示这次调用没有被编辑器拒绝，不是当前绑定。9.8.3 上没有 `getDouyinMusicInfo`。`getLocalMusicList` 和 `getLocalMusicResourceItem` 不作为确认或失败依据，确认逻辑不调用它们。调用前先记下活动工程路径，以及 `Assets/NoImportAsset/<music_id>/MusicInfo.json` 是否已经存在。调用后再读路径。路径变了是 `PROJECT_IDENTITY_CHANGED`，不把文件算作这次导入，也不再调用。文件在调用前就已经存在，是 `MUSIC_APPLY_UNCONFIRMED`（这次导入未被证明，绑定仍未确认）。文件或它所在的 id 目录是符号链接，或者真实路径跑出工程目录，同样是 `MUSIC_APPLY_UNCONFIRMED`。另一条曲目即使标题相同，也不代替这条 `music_id`。只有调用前不存在、调用后新出现的普通文件，真实路径仍在同一工程内，并且标题在两边都非空时一致，才返回 `imported: true`。这时 `confirmed` 和 `bound` 仍是 `false`，`binding` 是 `unconfirmed`，`saved` 是 `false`。标题对不上是 `MUSIC_APPLY_MISMATCH`。文件不存在或读不了是 `MUSIC_APPLY_UNCONFIRMED`。不调用 `showMusicAsset`，不自动 `save_project`，也不再调用 `setDouyinMusicInfo`。`effect.dyehpj` 的 `soundID` 和磁盘上的「抖音音乐」`AudioComponent` 要等之后一次明确的官方保存才会写进文件。官方 `get_scene` 不提供曲目 id，所以不能把场景读回当作绑定证明。多个窗口必须点名。调用前官方实例路径要和插件路径一致，并走当时的允许/拒绝名单；名单本身的默认值不在曲库里改。
+
+官方已转发的工具里，`project_status` 能给出工程路径、`project_id`、`is_saved`、`is_changed` 和 `scene_dirty`，`get_scene` 能给出名为「抖音音乐」的对象及其 `AudioComponent`。这两项都不返回 `effect.dyehpj` 的 `soundID`。没有一条官方只读工具能单独把所选 `music_id` 核对成已保存的绑定。`music_verify` 因此是只读补充，不调用 `setDouyinMusicInfo`，也不调用 `save_project`。`persisted`、`confirmed`、`bound` 同时为真，仅当：传入的 `project_id` 等于当前官方 `project_status.project_id`，官方状态是已保存且 `is_changed` 与 `scene_dirty` 都为假，插件 `isProjectChanged()` 为假，磁盘 `soundID` 与 `music_id` 完全一致，`Assets/NoImportAsset/<music_id>/MusicInfo.json` 是工程内的普通文件且标题、作者、时长与参数一致，并且 `Assets/main.scene` 与官方 `get_scene` 都恰好有一个「抖音音乐」带音频组件。9.8.3 把该组件写成 `DynamicComponent`，其 `name` 或 `className` 为 `AudioComponent`；直接的 `__class: AudioComponent` 也同样算。另一个同名对象，或同一个对象上重复的音频组件，都不是唯一匹配。非音频的 `DynamicComponent` 不算。未保存、旧 `soundID`、旧资源、符号链接或工程身份不一致时，这三项都保持假，`imported` 也保持假。`music_apply` 的 `imported: true` 不会因此变成绑定。
 
 像塑进程不会继承启动 stdio 服务时的 `XIANGSU_MCP_PLUS_STATE`。插件因此把实例写在默认的用户主目录 `.xiangsu-mcp-plus-win`。stdio 若另设了状态目录，列窗口时同时读这两个 `instances` 目录。同一个 pid 有两份仍活着、端口或令牌不同的记录时拒绝选择，错误里不包含令牌。过期记录不会挡住另一目录里仍然对得上进程启动时间的那一份。
 
@@ -88,7 +90,7 @@ Windows 上不从 `PATH` 找这两个程序。`SystemRoot`（没有则 `WINDIR`�
 - 缺 `OpenProjectFromEditCommand` 时 `self_check.ok === false`
 - 曲库模块缺失不单独把 project 判失败，同时 `features.music === false`
 - 分类、列表和搜索返回 `music_id` 与 `selection`，不把曲库原始对象带回客户端
-- `music_apply` 只绑定再读到的那条 id；失败、读回不一致或调用中断都只发出一次 `setDouyinMusicInfo`
+- `music_apply` 只对再读到的那条 id 调用一次 `setDouyinMusicInfo`；失败、读回不一致、旧文件或调用中断都不发第二次
 - 两个窗口不点名时不调用曲库；拒绝名单上的工程不绑定；官方路径对不上或窗口已换工程时不绑定
 - 令牌不进 401 响应、错误和日志；错误回显里的 Bearer 会被抹掉
 - 精简 `PATH` 下仍用 `SystemRoot` 绝对路径调用 `whoami.exe` / `powershell.exe`；找不到就 `ACL_FAILED`，令牌文件删除
@@ -104,12 +106,30 @@ Windows 上不从 `PATH` 找这两个程序。`SystemRoot`（没有则 `WINDIR`�
 
 未测，或只跑通过一次、不能写成编辑器验收：
 
+- 像塑 9.8.3 是否会加载带 CommonJS 边界的 `index.js`。Node 已复现祖先 `"type": "module"` 下裸 `index.js` 的 `ReferenceError`，以及边界文件让 `import()` 和 `require()` 都得到插件类。这还不是编辑器验收。
+- `OpenProjectFromEditCommand`、`Project.unload` 在 Windows 9.8.3 上是否还是这些模块路径
+- 官方 `17320` 的实时工具列表和 `generation` 字段
+- 无窗口启动编辑器的安全命令。plus 自己冷启动仍未实现。用户完全退出后用桌面快捷方式打开，再由 `ext_status` 发现窗口，是用户启动，不是这个工具启动。
 - 像塑 9.8.3 上，带 CommonJS 边界的 `index.js` 已经加载，并且完成过一次隔离的 `project_new` → `project_close` → `project_open`（官方与磁盘读回一致，发起操作的窗口没有关，新建只保存一次）。`ext_status.contract.editor_acceptance` 仍是 `unverified`。这一次不是全覆盖验收，也没有证明早先 `fetch failed` 的原因消失。见 `AGENTS.md`。
 - 同一次流程调用过 `OpenProjectFromEditCommand` 和命名空间 `Project.unload`。没有做反汇编级核对，也不能外推到别的编辑器版本。
 - 官方 `17320` 的工具列表和 `generation` 字段没有写成永久契约
 - 无窗口启动编辑器的安全命令
 - Orion 最小化 / 不抢焦点
-- 曲库绑定和图标上传在像塑窗口里的读回
+- 一次 `project_new` 在 `project_launch` 成功之后 stdio 断开的进程退出原因。后来有完整的 new、close、open，不能把那次断线写成已经修好。`logs/stdio.log` 里没有后续行，只是线索。
+
+## 9.8.3 上已经看到的范围
+
+下面只覆盖一次可丢弃工程上的这些调用。`ext_status.contract.editor_acceptance` 仍是 `unverified`。合同 CI 仍是 `npm test`。不要把这一段写成全部编辑器验收。
+
+实测包是 `77132ee05f80aede42d62feb20c91e019c092fef` 的 `xiangsu-mcp-plus-win-0.1.11.tgz`，SHA-256 `fd2246329ae9ccda8d6e40a6f3d5320d74b8c1aee88aa70d213c8e7023f6128d`。stdio 进程报 0.1.11。打开中的窗口当时仍加载 0.1.10 插件，构建号同为 `75e612dc2c038b4c`，`editor-plugin` 的 9 个源文件字节相同。服务启动时按包版本把磁盘插件目录写成 0.1.11，并曾把 `requires_window_reopen` 标成真。没有按这个标记重开窗口。磁盘上出现 0.1.11 目录，不等于该窗口已经加载了另一份插件逻辑。
+
+重开窗口曾让官方 `is_changed` 和插件未保存标记变成真，而 `effect.dyehpj` 与 `main.scene` 的内容哈希没有变。dirty 门因此返回 `UNSAVED`，并且当时不读磁盘曲目。要核对持久化绑定，先做一次明确的官方 `save_project`，等官方和插件都重新干净，再调用 `music_verify`。`music_verify` 自己不保存，也不调用 `setDouyinMusicInfo`。
+
+在那次明确保存之后、窗口保持干净时，`music_verify` 对 `music_id` `7381809852086241292`、`project_id` `28829cb5-2b74-2d65-111c-b0d9bf8e79e8` 返回 `persisted`、`confirmed`、`bound` 为真，`imported` 为假，`saved` 为真，`binding` 为 `persisted`，`scene_objects` 与 `official_scene_objects` 都是 1，`apply_calls` 与 `save_calls` 都是 0，`reason` 为 `PERSISTED`。错误 `music_id` 返回 `SOUND_ID_MISMATCH`。错误 `project_id` 返回 `PROJECT_ID_MISMATCH`。这三次前后相关文件的哈希和 mtime 没有变。`dyehpj` 哈希是 `878ea5e60696919b2f81a0cc2b2d7448aead0c72db65347fd23ff48fb3c20594`。
+
+同一条较早的可丢弃工程记录里：0.1.9 有两轮 `project_new`、`project_close`、`project_open` 成功；`icon_set` 一次写出两张 360×360 PNG，SHA-256 `6e8b14fc1cff39aebe18adc6b43187a229c4c983bd69bda095a22bea260b09bc`；`music_apply` 一次返回 `imported` 为真、`confirmed` 与 `bound` 为假，随后一次明确的官方保存才把 `soundID` 写进 `effect.dyehpj`。这些不是 `music_verify` 的自动保存，也不是再一次 apply。
+
+仍未覆盖：plus 自己启动编辑器、断线根因、重开后不保存就确认绑定、以及这份记录以外的工程或编辑器版本。
 
 ## 图标图（本地）与图标工具（合同测试，编辑器未验收）
 
@@ -133,6 +153,6 @@ Windows 上不从 `PATH` 找这两个程序。`SystemRoot`（没有则 `WINDIR`�
 
 ## 还没在编辑器里做完的
 
-1. 曲库工具已经注册。编辑器验收仍待做：先看可丢弃窗口的 `features.music`，再按 README 的曲库步骤核对读回。模块路径与上游 `REQUIRED.music` 相同。
-2. 图标工具已经注册。本地 360×360 制作和合同测试不能代替像塑 9.8.3 的读回。
-3. 不代勾协议，不点提交审核，不调用付费生成。
+1. 上面那一次 9.8.3 记录没有覆盖全部曲库路径。`music_apply` 的导入语义、搜索分页、分类列表和失败后再试，仍不要写成普遍验收。
+2. 图标那一次是同一可丢弃工程上的单次 `icon_set` 和随后的官方保存。`icon_open` 是否让窗口出现，以及别的图片，还没有这份记录。
+3. 不代勾协议，不点提交审核，不调用付费生成。plus 不自己启动编辑器。

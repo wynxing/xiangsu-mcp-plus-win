@@ -66,7 +66,7 @@ test('music tools are registered once and a same-named official tool stays shado
   });
   const listed = await listToolDefs(d);
   const names = listed.map((tool) => tool.name);
-  for (const name of ['music_categories', 'music_list', 'music_search', 'music_apply']) {
+  for (const name of ['music_categories', 'music_list', 'music_search', 'music_apply', 'music_verify']) {
     assert.equal(names.filter((item) => item === name).length, 1);
   }
   assert.equal(names.includes('icon_set'), true);
@@ -77,6 +77,9 @@ test('music tools are registered once and a same-named official tool stays shado
   assert.equal(apply.annotations.readOnlyHint, false);
   assert.match(search.description, /music_id/);
   assert.match(apply.description, /not retried/);
+  const verify = listed.find((tool) => tool.name === 'music_verify');
+  assert.equal(verify.annotations.readOnlyHint, true);
+  assert.match(verify.description, /does not save/);
 });
 
 test('music_search uses the only open window and refuses an ambiguous choice', async () => {
@@ -110,11 +113,14 @@ test('music_apply binds only a confirmed window and does not retry a lost write'
   const other = absolute('xs-music-other');
   const ok = session([[4, project]], {
     pluginResult: {
-      confirmed: true,
-      binding: 'douyin_library',
+      imported: true,
+      confirmed: false,
+      bound: false,
+      saved: false,
+      binding: 'unconfirmed',
       local_import: false,
       music_id: 'm1',
-      readback: { music_id: 'm1', binding: 'douyin_library' },
+      readback: { music_id: 'm1', binding: 'unconfirmed', scene_saved: false },
       apply_calls: 1,
     },
   });
@@ -126,8 +132,10 @@ test('music_apply binds only a confirmed window and does not retry a lost write'
   });
   assert.equal(bound.isError, undefined);
   const body = JSON.parse(bound.content[0].text);
-  assert.equal(body.confirmed, true);
-  assert.equal(body.binding, 'douyin_library');
+  assert.equal(body.imported, true);
+  assert.equal(body.confirmed, false);
+  assert.equal(body.bound, false);
+  assert.equal(body.binding, 'unconfirmed');
   assert.equal(body.local_import, false);
   assert.equal(body.readback.music_id, 'm1');
   assert.equal(ok.calls.filter((call) => call[1] === 'music_apply').length, 1);

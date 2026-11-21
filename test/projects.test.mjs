@@ -115,6 +115,46 @@ test('an idle window can host project_new in the same process', async () => {
   assert.equal(windows.get(100), target);
 });
 
+test('project_new does not launch or save when the client already disconnected', async () => {
+  const { d, calls } = world({ paths: [[100, null]] });
+  const ac = new AbortController();
+  ac.abort();
+  d.requestSignal = ac.signal;
+  await assert.rejects(
+    () => new Projects(d).create({ path: path.join(tmpdir('xs-new-'), '空白') }),
+    /PROJECT_NEW_INTERRUPTED: stdio connection closed before project_launch/,
+  );
+  assert.equal(calls.some((call) => call[1] === 'project_launch' || call[1] === 'save_project'), false);
+});
+
+test('project_new stops after a returned launch when stdio closes and does not save', async () => {
+  const { d, calls, windows } = world({ paths: [[100, null]] });
+  const ac = new AbortController();
+  d.requestSignal = ac.signal;
+  const phases = [];
+  d.logPhase = (line) => phases.push(line);
+  const temp = path.join(tmpdir('xs-tmp-'), 'ProjectCreatedTmp', '未命名');
+  d.callPlugin = async (method, params, opts) => {
+    calls.push(['plugin', method, params, opts.pid]);
+    if (method === 'status') return { projectPath: windows.get(opts.pid) ?? null };
+    if (method === 'project_launch' && params.operation === 'createNew') {
+      windows.set(100, temp);
+      ac.abort();
+      return { requested: 'createNew', reused_current: true, created_pid: 100 };
+    }
+    return {};
+  };
+  await assert.rejects(
+    () => new Projects(d).create({ path: path.join(tmpdir('xs-new-'), '空白') }),
+    /stdio connection closed after project_launch returned/,
+  );
+  assert.equal(calls.filter((call) => call[1] === 'project_launch').length, 1);
+  assert.equal(calls.some((call) => call[1] === 'save_project'), false);
+  assert.equal(windows.get(100), temp);
+  assert.ok(phases.includes('project_new launch_returned'));
+  assert.ok(phases.includes('project_new interrupted_after_launch'));
+});
+
 test('an idle window can open a project in a new process without a second click', async () => {
   const occupied = path.join(tmpdir('xs-keep-'), 'keep');
   const { d, calls, windows } = world({ paths: [[100, occupied], [101, null]] });
