@@ -12,7 +12,7 @@ const { redact } = require('./redact.cjs');
 const { restrictPrivate } = require('./private-file.cjs');
 
 const MAX_BODY = 4 * 1024 * 1024;
-const MUTATING = new Set(['project_launch', 'project_close']);
+const MUTATING = new Set(['project_launch', 'project_close', 'icon_set', 'icon_open']);
 
 function statePaths() {
   const root = process.env.XIANGSU_MCP_PLUS_STATE || path.join(os.homedir(), '.xiangsu-mcp-plus-win');
@@ -191,4 +191,4 @@ function log(...args) {
   } catch (_) {}
 }
 
-module.exports = { Runtime, log, isLoopback };
+module.exports = { Runtime, log, isLoopback, MUTATING };
