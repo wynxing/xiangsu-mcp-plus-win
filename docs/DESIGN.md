@@ -59,7 +59,7 @@ MCP 客户端 --stdio--> src/server.mjs
 
 连接失败且请求还没写出：`OfficialUnreachable`，这次调用没有发出。连接之后的传输错误：丢掉客户端，抛出带 `ambiguous` 的错误，**不重试**。协议错误（`McpError`）是官方的答复，也不重试。下一次用户主动调用才会重新连接。`watch` 只在断开时重试连接和 `tools/list`，不调用业务工具。
 
-插件 RPC 使用 `http://127.0.0.1:<端口>/rpc`，并带 `Connection: close`，不把上一次调用的 keep-alive 套接字留给下一次。传输失败变成 `PLUGIN_RPC_FAILED(<方法>): <message> (<cause.code 或 name>)`。`project_launch` 和 `project_close` 在插件里先写 `rpc start`，成功结束写 `rpc done`，抛错写 `rpc error`。这些日志不包含令牌。一次机器上的 `project_new` 只返回了 `fetch failed`，请求有没有到达插件无法从那份日志判断；0.1.3 让下一次失败带上原因码。没有因此重试 `project_launch`。
+插件 RPC 使用 `http://127.0.0.1:<端口>/rpc`，并带 `Connection: close`，不把上一次调用的 keep-alive 套接字留给下一次。传输失败变成 `PLUGIN_RPC_FAILED(<方法>): <message> (<cause.code 或 name>)`。`project_launch` 和 `project_close` 在插件里先写 `rpc start`，成功结束写 `rpc done`，抛错写 `rpc error`。这些日志不包含令牌。0.1.2 的一次 `project_new` 只返回了 `fetch failed`，当时看不出请求有没有到达插件。0.1.3 在像塑 9.8.3 上后来有一次受控流程没有再现这个错误；这没有证明原因消失，也没有因此自动重试 `project_launch`。操作规则见仓库根目录 `AGENTS.md`。
 
 ## 安装与权限
 
@@ -102,11 +102,11 @@ Windows 上不从 `PATH` 找这两个程序。`SystemRoot`（没有则 `WINDIR`�
 - 图标图：png / jpeg / gif / webp 中心裁成正方形再缩成 360×360 PNG；源文件字节不变；坏图、空文件、相对路径不留临时文件
 - 图标工具：点名窗口后才调用插件；`features.icon` 为假时不写文件且 `features.project` 仍可为真；上传不是 `true` 或调用失败时不自动再传
 
-未测，不能写成编辑器验收：
+未测，或只跑通过一次、不能写成编辑器验收：
 
-- 像塑 9.8.3 是否会加载带 CommonJS 边界的 `index.js`。Node 已复现祖先 `"type": "module"` 下裸 `index.js` 的 `ReferenceError`，以及边界文件让 `import()` 和 `require()` 都得到插件类。这还不是编辑器验收。
-- `OpenProjectFromEditCommand`、`Project.unload` 在 Windows 9.8.3 上是否还是这些模块路径
-- 官方 `17320` 的实时工具列表和 `generation` 字段
+- 像塑 9.8.3 上，带 CommonJS 边界的 `index.js` 已经加载，并且完成过一次隔离的 `project_new` → `project_close` → `project_open`（官方与磁盘读回一致，发起操作的窗口没有关，新建只保存一次）。`ext_status.contract.editor_acceptance` 仍是 `unverified`。这一次不是全覆盖验收，也没有证明早先 `fetch failed` 的原因消失。见 `AGENTS.md`。
+- 同一次流程调用过 `OpenProjectFromEditCommand` 和命名空间 `Project.unload`。没有做反汇编级核对，也不能外推到别的编辑器版本。
+- 官方 `17320` 的工具列表和 `generation` 字段没有写成永久契约
 - 无窗口启动编辑器的安全命令
 - Orion 最小化 / 不抢焦点
 - 曲库绑定和图标上传在像塑窗口里的读回
