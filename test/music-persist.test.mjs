@@ -8,6 +8,26 @@ import { assessSavedMusic, sceneDouyinAudioCount } from '../src/music-persist.mj
 import { Projects } from '../src/projects.mjs';
 import { tmpdir } from '../support/tmp.mjs';
 
+// Creating a Windows symlink requires SeCreateSymbolicLinkPrivilege (or Developer
+// Mode). Elevated CI has it; a locked-down local host does not. Probe the real
+// capability so the symlink-only assertions stay fully in force wherever the OS
+// permits them, and are reported as skipped (never weakened) where it does not.
+function symlinkCapable() {
+  const dir = tmpdir('xs-symlink-cap-');
+  const target = path.join(dir, 'target');
+  const link = path.join(dir, 'link');
+  try {
+    fs.writeFileSync(target, 'probe');
+    fs.symlinkSync(target, link);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    try { fs.unlinkSync(link); } catch {}
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+  }
+}
+
 const MUSIC = 'm-current';
 const OLD = 'm-old';
 const PROJECT = 'pid-current';
@@ -65,7 +85,7 @@ test('a saved sound id, matching asset, and one scene object count as persisted'
   assert.equal(found.imported, false);
 });
 
-test('an unsaved flag is not this module, and an old sound id or old asset is not persisted', () => {
+test('an unsaved flag is not this module, and an old sound id or old asset is not persisted', (t) => {
   const oldSound = assessSavedMusic(project({ soundID: OLD }), expected);
   assert.equal(oldSound.ok, false);
   assert.equal(oldSound.reason, 'SOUND_ID_MISMATCH');
@@ -79,9 +99,13 @@ test('an unsaved flag is not this module, and an old sound id or old asset is no
   assert.equal(titled.ok, false);
   assert.equal(titled.reason, 'METADATA_MISMATCH');
 
-  const linked = assessSavedMusic(project({ symlink: true }), expected);
-  assert.equal(linked.ok, false);
-  assert.equal(linked.reason, 'ASSET_UNTRUSTED');
+  if (symlinkCapable()) {
+    const linked = assessSavedMusic(project({ symlink: true }), expected);
+    assert.equal(linked.ok, false);
+    assert.equal(linked.reason, 'ASSET_UNTRUSTED');
+  } else {
+    t.skip('symlink privilege unavailable on this host');
+  }
 
   const switched = assessSavedMusic(project({ projectID: 'pid-other' }), expected);
   assert.equal(switched.ok, false);

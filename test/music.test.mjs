@@ -5,6 +5,26 @@ import path from 'node:path';
 import test from 'node:test';
 import { tmpdir } from '../support/tmp.mjs';
 
+// Creating a Windows symlink requires SeCreateSymbolicLinkPrivilege (or Developer
+// Mode). Elevated CI has it; a locked-down local host does not. Probe the real
+// capability so the symlink-only assertions stay fully in force wherever the OS
+// permits them, and are reported as skipped (never weakened) where it does not.
+function symlinkCapable() {
+  const dir = tmpdir('xs-symlink-cap-');
+  const target = path.join(dir, 'target');
+  const link = path.join(dir, 'link');
+  try {
+    fs.writeFileSync(target, 'probe');
+    fs.symlinkSync(target, link);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    try { fs.unlinkSync(link); } catch {}
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+  }
+}
+
 const require = createRequire(import.meta.url);
 const { Library } = require('../editor-plugin/library.cjs');
 const { M } = require('../editor-plugin/features/common.cjs');
@@ -327,7 +347,7 @@ test('the object setDouyinMusicInfo returns is not a binding', async () => {
   assert.equal(unread.calls.filter((call) => Array.isArray(call) && call[0] === 'set').length, 1);
 });
 
-test('an old asset, a same-title other id, a symlink, and a project change are not this call', async () => {
+test('an old asset, a same-title other id, a symlink, and a project change are not this call', async (t) => {
   const old = musicEditor();
   writeMusicAsset(old.projectPath, track('m1'));
   await assert.rejects(
@@ -353,12 +373,16 @@ test('an old asset, a same-title other id, a symlink, and a project change are n
   assert.equal(imported.music_id, 'm1');
   assert.equal(imported.readback.asset, 'Assets/NoImportAsset/m1/MusicInfo.json');
 
-  const linked = musicEditor({ writeAsset: 'symlink' });
-  await assert.rejects(
-    linked.lib.musicApply({ music_id: 'm1', source: 'category', category_code: 'rec' }),
-    /symlink[\s\S]*binding unconfirmed[\s\S]*not retried/,
-  );
-  assert.equal(linked.calls.filter((call) => Array.isArray(call) && call[0] === 'set').length, 1);
+  if (symlinkCapable()) {
+    const linked = musicEditor({ writeAsset: 'symlink' });
+    await assert.rejects(
+      linked.lib.musicApply({ music_id: 'm1', source: 'category', category_code: 'rec' }),
+      /symlink[\s\S]*binding unconfirmed[\s\S]*not retried/,
+    );
+    assert.equal(linked.calls.filter((call) => Array.isArray(call) && call[0] === 'set').length, 1);
+  } else {
+    t.skip('symlink privilege unavailable on this host');
+  }
 
   const moved = musicEditor({ pathAfterSet: path.join(tmpdir('xs-music-other-'), 'elsewhere') });
   await assert.rejects(
