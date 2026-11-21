@@ -70,8 +70,11 @@ const { Runtime, log } = require(${JSON.stringify(runtimeFile)});
 module.exports = class {
   initPlugin() {
     if (!process.argv.includes('--projectType=project')) return;
-    try { this.runtime = new Runtime(); this.runtime.start(); }
-    catch (e) { log('init failed', e && e.stack); }
+    try {
+      this.runtime = new Runtime();
+      const pending = this.runtime.start();
+      if (pending && typeof pending.then === 'function') pending.catch((e) => log('init failed', e && e.stack));
+    } catch (e) { log('init failed', e && e.stack); }
   }
   deinitPlugin() { this.runtime && this.runtime.stop(); }
 };

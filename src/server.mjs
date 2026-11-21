@@ -98,8 +98,9 @@ export function toolDefinitions() {
     {
       name: 'project_open',
       description:
-        'Open an existing project directory (it must contain effect.dyehpj) through an already-open project window. ' +
-        'If that project is already open, returns it unchanged. With no project window, returns NO_EDITOR_WINDOW and does not launch the editor. ' +
+        'Open an existing project directory (it must contain effect.dyehpj) through a project process that already has the plugin loaded. ' +
+        'An idle process with no project can send the open. The home process may load it there or in a new process; the result is whichever pid reads back that path. ' +
+        'A process that already shows a project is not replaced. If that project is already open, returns it unchanged. With no plugin process, returns NO_EDITOR_WINDOW and does not launch the editor. ' +
         'Does not minimize or activate unrelated windows.',
       schema: z.strictObject({ path: z.string().min(1).describe('Absolute path of the project folder.') }),
       run: async (args, _d, projects) => projects.open(args),
@@ -107,8 +108,9 @@ export function toolDefinitions() {
     {
       name: 'project_new',
       description:
-        'Create a blank project through an already-open project window and save it once with the official save_project tool. ' +
-        'The target must be missing or an empty directory. Does not overwrite an existing directory or project. ' +
+        'Create a blank project through a project process that already has the plugin loaded, then save it once with the official save_project tool. ' +
+        'An idle process with no project can send the create. The home process may host the new project in that process or in a new one; exactly one pid must read back as ProjectCreatedTmp before save. ' +
+        'A process that already shows a project must still show it afterwards. The target must be missing or an empty directory. Does not overwrite an existing directory or project. ' +
         'A failed or disconnected save is not retried.',
       schema: z.strictObject({ path: z.string().min(1).describe('Absolute path of the folder to save the new project into.') }),
       run: async (args, _d, projects) => projects.create(args),

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { defaultCandidates, discoverEditor, userPluginRoot } from '../src/editor.mjs';
+import { defaultCandidates, discoverEditor, runningEditorExes, userPluginRoot } from '../src/editor.mjs';
 import { peWithFileVersion } from '../support/pe-fixture.mjs';
 import { tmpdir } from '../support/tmp.mjs';
 
@@ -101,5 +101,33 @@ test('an explicit editor root that does not match the layout is not replaced by 
         candidates: ['C:\\Users\\Example\\AppData\\Local\\Douyin AR'],
       }),
     /EDITOR_LAYOUT_UNKNOWN/,
+  );
+});
+
+test('running editor lookup uses SystemRoot powershell instead of PATH', () => {
+  const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+  const calls = [];
+  const found = runningEditorExes({
+    platform: 'win32',
+    env: { SystemRoot: 'C:\\Windows', PATH: 'C:\\Windows\\System32' },
+    existsSync: (candidate) => String(candidate).replaceAll('/', '\\') === powershell,
+    execFile(cmd) {
+      calls.push(String(cmd));
+      if (!path.win32.isAbsolute(cmd)) throw Object.assign(Error(`spawnSync ${cmd} ENOENT`), { code: 'ENOENT' });
+      return 'D:\\Douyin AR\\Douyin AR.exe\r\nD:\\Douyin AR\\Douyin AR.exe\r\n';
+    },
+  });
+  assert.deepEqual(calls, [powershell]);
+  assert.deepEqual(found, ['D:\\Douyin AR\\Douyin AR.exe']);
+  assert.deepEqual(
+    runningEditorExes({
+      platform: 'win32',
+      env: { SystemRoot: 'C:\\Windows', PATH: 'C:\\Windows\\System32' },
+      existsSync: () => false,
+      execFile() {
+        throw Error('PATH search');
+      },
+    }),
+    [],
   );
 });

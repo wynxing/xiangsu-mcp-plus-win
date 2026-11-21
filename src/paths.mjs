@@ -36,7 +36,7 @@ export function samePath(a, b, opts) {
   return platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
 }
 
-// `child` is the same folder as `parent` or a descendant. Used by the optional deny list.
+// `child` is the same folder as `parent` or a descendant. Used by the deny list and an optional allowlist.
 export function pathInside(child, parent, opts) {
   const platform = opts?.platform ?? process.platform;
   const api = pathApi(platform);

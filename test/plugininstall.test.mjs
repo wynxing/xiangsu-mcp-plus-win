@@ -253,5 +253,46 @@ test('the generated entry loads the real runtime without starting it', async () 
     } finally {
       process.argv = argv;
     }
+    const source = fs.readFileSync(entry, 'utf8');
+    assert.match(source, /const pending = this\.runtime\.start\(\)/);
+    assert.match(source, /pending\.catch\(\(e\) => log\('init failed', e && e\.stack\)\)/);
+  }
+});
+
+test('the generated entry logs an async ACL startup failure instead of leaving it unhandled', async () => {
+  const logFile = path.join(tmpdir('xs-log-'), 'plugin.log');
+  const pkg = fakePackage('1.2.0');
+  fs.writeFileSync(
+    path.join(pkg, 'editor-plugin', 'runtime.cjs'),
+    `const fs = require('fs');
+module.exports = {
+  Runtime: class {
+    start() { return Promise.reject(Error('ACL_FAILED: spawnSync powershell.exe ENOENT')); }
+    stop() {}
+  },
+  log(...args) { fs.appendFileSync(${JSON.stringify(logFile)}, args.map(String).join(' ') + '\\n'); }
+};
+`,
+  );
+  const pluginRoot = pluginRootWithOthers();
+  ensurePlugin({ pluginRoot, pkgRoot: pkg, stateRoot: tmpdir('xs-st-') });
+  const entry = path.join(pluginRoot, 'XiangsuMcpPlus@1.2.0', 'index.js');
+  const unhandled = [];
+  const onUnhandled = (error) => unhandled.push(error);
+  process.on('unhandledRejection', onUnhandled);
+  const argv = process.argv;
+  process.argv = [...argv, '--projectType=project'];
+  try {
+    const Plugin = require(entry);
+    const plugin = new Plugin();
+    plugin.initPlugin();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(unhandled.map((error) => error.message), []);
+    const text = fs.readFileSync(logFile, 'utf8');
+    assert.match(text, /^init failed Error: ACL_FAILED: spawnSync powershell.exe ENOENT/m);
+    assert.equal(text.includes('Unhandled Rejection'), false);
+  } finally {
+    process.argv = argv;
+    process.off('unhandledRejection', onUnhandled);
   }
 });

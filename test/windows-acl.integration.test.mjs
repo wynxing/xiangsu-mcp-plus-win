@@ -104,3 +104,27 @@ $sec.AddAccessRule($rule)
   );
   assert.equal(fs.existsSync(doomed), false);
 });
+
+test('real powershell and whoami still lock a DACL when PATH cannot see WindowsPowerShell', { skip: !windows }, () => {
+  const root = process.env.SystemRoot || process.env.WINDIR;
+  const system32 = path.join(root, 'System32');
+  const slim = { ...process.env, PATH: system32, Path: system32 };
+  assert.throws(
+    () => execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', 'exit 0'], { windowsHide: true, env: slim }),
+    (error) => error.code === 'ENOENT' || /ENOENT/.test(String(error.message)),
+  );
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xs-acl-slim-'));
+  const file = path.join(dir, 'token.json');
+  fs.writeFileSync(file, '{}');
+  const real = execFileSync;
+  const run = (cmd, args, opts) => {
+    assert.equal(path.win32.isAbsolute(cmd), true);
+    const base = path.win32.basename(cmd).toLowerCase();
+    assert.equal(base === 'powershell.exe' || base === 'whoami.exe', true);
+    return real(cmd, args, { ...opts, env: slim });
+  };
+  restrictPrivate(file, { execFile: run });
+  pluginAcl.restrictPrivate(file, { execFile: run });
+  assert.equal(fs.existsSync(file), true);
+  assert.match(fs.readFileSync(file, 'utf8'), /\{\}/);
+});

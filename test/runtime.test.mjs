@@ -97,3 +97,32 @@ test('mutating calls on one window run one at a time', async () => {
   await Promise.all([first, second]);
   rt.stop();
 });
+
+test('async startup failure is written to plugin.log and does not escape as an unhandled rejection', async () => {
+  const state = tmpdir('xs-rt-');
+  process.env.XIANGSU_MCP_PLUS_STATE = state;
+  const { Runtime } = require('../editor-plugin/runtime.cjs');
+  const rt = new Runtime();
+  const unhandled = [];
+  const onUnhandled = (error) => unhandled.push(error);
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    await assert.rejects(
+      rt.start({
+        protect() {
+          throw Error('ACL_FAILED: spawnSync powershell.exe ENOENT');
+        },
+      }),
+      /ACL_FAILED: spawnSync powershell.exe ENOENT/,
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(unhandled, []);
+    const log = fs.readFileSync(path.join(state, 'logs', 'plugin.log'), 'utf8');
+    assert.match(log, /^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\] \[\d+\] init failed Error: ACL_FAILED: spawnSync powershell.exe ENOENT/m);
+    assert.equal(log.includes(rt.token), false);
+    assert.equal(fs.existsSync(path.join(state, 'instances', `${process.pid}.json`)), false);
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+    rt.stop();
+  }
+});

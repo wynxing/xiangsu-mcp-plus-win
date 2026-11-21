@@ -81,28 +81,37 @@ class Runtime {
     };
   }
 
-  start() {
+  start(options = {}) {
+    const protect = typeof options.protect === 'function' ? options.protect : restrictPrivate;
     const { instanceDir } = statePaths();
     this.stateFile = path.join(instanceDir, `${process.pid}.json`);
     this.server = http.createServer((req, res) => this.handle(req, res));
     this.server.requestTimeout = 0;
     return new Promise((resolve, reject) => {
-      this.server.once('error', reject);
+      let settled = false;
+      const fail = (error) => {
+        if (settled) return;
+        settled = true;
+        this.stop();
+        this.log('init failed', error && (error.stack || error.message || error));
+        reject(error);
+      };
+      this.server.once('error', fail);
       this.server.listen(0, '127.0.0.1', () => {
         try {
           const { port } = this.server.address();
           fs.mkdirSync(instanceDir, { recursive: true, mode: 0o700 });
-          restrictPrivate(instanceDir);
+          protect(instanceDir);
           const tmp = `${this.stateFile}.tmp`;
           fs.writeFileSync(tmp, JSON.stringify({ pid: process.pid, port, token: this.token, startedAt: Date.now() }), { mode: 0o600 });
-          restrictPrivate(tmp);
+          protect(tmp);
           fs.renameSync(tmp, this.stateFile);
-          restrictPrivate(this.stateFile);
+          protect(this.stateFile);
           this.log('listening', port);
+          settled = true;
           resolve(port);
         } catch (e) {
-          this.stop();
-          reject(e);
+          fail(e);
         }
       });
     });

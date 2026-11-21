@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import { once } from 'node:events';
 import { listInstances } from '../src/bridge.mjs';
-import { parseWindowsStartLines, processStartTimes, recordMatchesProcess } from '../src/procinfo.mjs';
+import { parseWindowsStartLines, processStartTimes, recordMatchesProcess, windowsStartTimes } from '../src/procinfo.mjs';
 import { tmpdir } from '../support/tmp.mjs';
 
 test('windows CIM lines become start times and a dead pid is absent', () => {
@@ -87,6 +87,58 @@ test('a stale record does not hide the live record in the other state directory'
   const found = listInstances({ env: { XIANGSU_MCP_PLUS_STATE: custom }, homedir: () => home });
   assert.equal(found.length, 1);
   assert.equal(found[0].port, 2);
+});
+
+test('windows start times use SystemRoot powershell and do not treat a missing binary as no process', () => {
+  const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+  const calls = [];
+  const times = windowsStartTimes([42], {
+    execFile(cmd) {
+      calls.push(cmd);
+      return '42\t2026-11-19T02:28:32.000Z\n';
+    },
+    env: { SystemRoot: 'C:\\Windows', PATH: 'C:\\Windows\\System32' },
+    existsSync: (candidate) => String(candidate).replaceAll('/', '\\') === powershell,
+  });
+  assert.deepEqual(calls, [powershell]);
+  assert.equal(times.get(42), Date.parse('2026-11-19T02:28:32.000Z'));
+  assert.equal(recordMatchesProcess(times.get(42), Date.parse('2026-11-19T02:28:33.000Z')), true);
+  assert.throws(
+    () => windowsStartTimes([42], {
+      execFile() {
+        throw Error('bare powershell.exe was searched on PATH');
+      },
+      env: { PATH: 'C:\\Windows\\System32' },
+      existsSync: () => true,
+    }),
+    /PROCESS_START_CHECK_FAILED: SystemRoot is unset or unusable/,
+  );
+  assert.throws(
+    () => windowsStartTimes([42], {
+      execFile() {
+        throw Error('bare powershell.exe was searched on PATH');
+      },
+      env: { SystemRoot: 'C:\\Windows', PATH: 'C:\\Windows\\System32' },
+      existsSync: () => false,
+    }),
+    /PROCESS_START_CHECK_FAILED: powershell\.exe not found under SystemRoot; PATH is not searched/,
+  );
+});
+
+test('a slim PATH still reads the real process start time through the SystemRoot powershell', { skip: process.platform !== 'win32' }, () => {
+  const root = process.env.SystemRoot || process.env.WINDIR;
+  const slim = { ...process.env, PATH: path.join(root, 'System32'), Path: path.join(root, 'System32') };
+  assert.throws(
+    () => execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', 'exit 0'], { windowsHide: true, env: slim }),
+    (error) => error.code === 'ENOENT' || /ENOENT/.test(String(error.message)),
+  );
+  const times = windowsStartTimes([process.pid], {
+    execFile: (cmd, args, opts) => {
+      assert.equal(path.win32.isAbsolute(cmd), true);
+      return execFileSync(cmd, args, { ...opts, env: slim });
+    },
+  });
+  assert.equal(recordMatchesProcess(times.get(process.pid), Date.now() + 1000), true);
 });
 
 test('the host can read this process start time', () => {

@@ -45,7 +45,20 @@ const methods = {
     const reported = Number(res && (res.pid ?? res.processId));
     const created_pid = Number.isInteger(reported) && reported > 0 ? reported : null;
     if (status === 'succeeded') return { requested: operation, path: withPath ? projectPath : null, created_pid };
-    if (status === 'reuseCurrent') throw Error(`WINDOW_LIMIT: all ${res.processCount} project windows are in use; close one with project_close first`);
+    // reuseCurrent means the home process would load the project into this window.
+    // That replaces a project the user already has open, so it stays a hard stop.
+    // An idle window has no project to replace; the same answer is the home process
+    // handing the project to this process.
+    if (status === 'reuseCurrent') {
+      let idle = false;
+      try {
+        idle = this.mod(M.ef).ProjectManager.getInstance().hasActiveProject() === false;
+      } catch {
+        idle = false;
+      }
+      if (!idle) throw Error(`WINDOW_LIMIT: all ${res.processCount} project windows are in use; close one with project_close first`);
+      return { requested: operation, path: withPath ? projectPath : null, created_pid: null, reused_current: true };
+    }
     if (status === 'cancelled' && res.reason === 'duplicateProject') throw Error(`PROJECT_ALREADY_OPEN: ${projectPath} is open in another window`);
     if (status === 'cancelled' || status === 'failed') throw Error(`LAUNCH_${String(status).toUpperCase()}: ${JSON.stringify(res)}`);
     throw Error(`UNEXPECTED_LAUNCH_RESPONSE: ${JSON.stringify(res)}`);
