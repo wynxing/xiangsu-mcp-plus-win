@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 // stdio MCP server. Official 像塑 tools are forwarded once. This slice adds
-// ext_status, project_open, project_new and project_close. Music and icon tools
-// are not registered.
+// ext_status, project window tools, icon tools, and the Douyin music library.
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -13,6 +12,7 @@ import { callPlugin, listInstances } from './bridge.mjs';
 import { OfficialMcp, OfficialUnreachable } from './official.mjs';
 import { installFromEnvironment } from './plugininstall.mjs';
 import { openIcon, setIcon } from './icons.mjs';
+import { musicToolDefinitions } from './music.mjs';
 import { COLD_START, Projects } from './projects.mjs';
 import { redact, redactObject } from './redact.mjs';
 
@@ -47,7 +47,7 @@ export function toolDefinitions() {
       description:
         'Diagnostics for this Windows bridge: official MCP connectivity, plugin install result, per-window self-check, and explicit unsupported states. ' +
         'features.project must be true before project_open / project_new / project_close. ' +
-        'icon_set and icon_open run only when that window reports features.icon. A missing icon module does not fail project tools. Music tools are not registered. ' +
+        'icon_set and icon_open run only when that window reports features.icon. Music tools require features.music. A missing icon or music module does not fail project tools. ' +
         'Cold start without a project window is unsupported. This is not evidence that a real 像塑 editor accepted the plugin.',
       schema: z.strictObject({}),
       run: async (_args, d, projects) => {
@@ -88,8 +88,13 @@ export function toolDefinitions() {
           plugin_install: d.pluginInstall ?? null,
           bootstrap: COLD_START,
           phases: {
-            music: { enabled: false, reason: 'not in this slice; ext_status self_check.features.music is diagnostic only' },
+            music: {
+              enabled: true,
+              tools: ['music_categories', 'music_list', 'music_search', 'music_apply'],
+              editor_acceptance: 'unverified',
+            },
             icon: {
+              enabled: true,
               registered: ['icon_set', 'icon_open'],
               editor_acceptance: 'unverified',
               reason:
@@ -99,7 +104,7 @@ export function toolDefinitions() {
           },
           windows,
           windows_error,
-          shadowed_official_tools: ['ext_status', 'project_open', 'project_new', 'project_close', 'icon_set', 'icon_open'].filter((name) => officialNames.has(name)),
+          shadowed_official_tools: toolDefinitions().map((tool) => tool.name).filter((name) => officialNames.has(name)),
         };
       },
     },
@@ -156,15 +161,19 @@ export function toolDefinitions() {
       schema: z.strictObject({ ...target }),
       run: async (args, d, projects) => openIcon(d, projects, args),
     },
+    ...musicToolDefinitions(),
   ];
 }
 
 function definition(tool) {
+  const readOnly = tool.readOnly === true || tool.name === 'ext_status';
+  const annotations = { readOnlyHint: readOnly };
+  if (!readOnly) annotations.destructiveHint = tool.name === 'project_close';
   return {
     name: tool.name,
     description: tool.description,
     inputSchema: z.toJSONSchema(tool.schema),
-    annotations: tool.name === 'ext_status' ? { readOnlyHint: true } : { readOnlyHint: false, destructiveHint: tool.name === 'project_close' },
+    annotations,
   };
 }
 
