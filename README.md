@@ -1,59 +1,147 @@
 # xiangsu-mcp-plus-win
 
-非官方的 Windows MCP 桥。它把像塑已经提供的官方 MCP 工具原样转发出来，并补上官方目前没有的工程窗口开关（`project_open`、`project_new`、`project_close`）和抖音曲库（`music_categories`、`music_list`、`music_search`、`music_apply`），外加 `ext_status` 自检。
+<div align="left">
 
-这不是字节跳动或抖音的产品，与官方没有从属关系。只供学习和个人制作。不要用它提交审核、勾选创作者协议、发布特效，或对不能丢弃的工程做关闭和保存。
+[![test](https://github.com/wynxing/xiangsu-mcp-plus-win/actions/workflows/test.yml/badge.svg)](https://github.com/wynxing/xiangsu-mcp-plus-win/actions/workflows/test.yml)
+[![Release](https://img.shields.io/github/v/release/wynxing/xiangsu-mcp-plus-win?color=blue)](https://github.com/wynxing/xiangsu-mcp-plus-win/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-brightgreen.svg)](https://nodejs.org/)
+[![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-blue.svg)](https://microsoft.com/windows)
+[![MCP Protocol](https://img.shields.io/badge/MCP-Protocol-purple.svg)](https://modelcontextprotocol.io/)
+
+</div>
+
+非官方的 Windows 像塑（Douyin AR）Model Context Protocol (MCP) 桥梁。它把像塑已经提供的官方 MCP 工具原样透明转发，并补齐官方目前没有的工程窗口生命周期管理（`project_open`、`project_new`、`project_close`）、Windows 无头后台冷启动引导、抖音曲库检索与绑定（`music_categories`、`music_list`、`music_search`、`music_apply`、`music_verify`）、图标本地标准化裁切上传（`icon_set`、`icon_open`），以及高可靠的 `ext_status` 运行态自检。
+
+> [!CAUTION]
+> **免责声明与安全红线**：  
+> 本项目不是字节跳动或抖音的产品，与官方没有从属关系。仅供学习与个人特效制作辅助。严禁使用本项目自动提交审核、代勾选创作者服务协议、发布特效，或对不可丢弃的重要工程做未经备份的自动化关闭和保存。
+
+---
+
+## 功能对比 (Feature Matrix)
+
+| 能力项 | 像塑官方 MCP (`127.0.0.1:17320`) | xiangsu-mcp-plus-win (本项目) |
+| :--- | :---: | :---: |
+| **官方工具透传** | ✅ 直接提供（场景/节点/资产读写） | ✅ 原样单次转发，严格不自动重放 |
+| **工程打开 (`project_open`)** | ❌ 无 | ✅ 安全受控打开，支持路径白名单校验 |
+| **工程新建 (`project_new`)** | ❌ 无 | ✅ 校验空目录防误覆盖，断线阶段回滚 |
+| **工程安全关闭 (`project_close`)** | ❌ 无 | ✅ 双重脏检查（官方 + 插件 300ms 探测） |
+| **无头冷启动 (Cold Start)** | ❌ 需手工先打开像塑客户端 | ✅ 自动后台/最小化引导拉起，零干扰前台 |
+| **抖音曲库检索与绑定 (`music_*`)** | ❌ 无 | ✅ 分类/搜索/分页/安全导入/双向持久化核验 |
+| **图标标准化裁切上传 (`icon_*`)** | ❌ 无 | ✅ 本地 Lanczos3 裁切为 360×360 PNG 上传 |
+| **本地通信鉴权** | ⚠️ 无鉴权（依赖本地网络） | ✅ 环回随机端口 + 独立 Bearer Token |
+| **Windows NTFS ACL 权限收敛** | ❌ 无 | ✅ 强制配置 DACL 仅限当前属主用户读写 |
+| **并发防护 (Target Lock)** | ❌ 无 | ✅ 跨进程/跨窗口排他锁防止数据写入竞争 |
+
+---
+
+## 快速接入 (Quickstart)
+
+### 1. 环境准备
+- Windows 10 / 11 操作系统
+- 像塑客户端（官方安装版本，如 9.8.3）
+- [Node.js](https://nodejs.org/) `>= 22`
+
+### 2. 克隆与安装插件
+在 Windows 终端（PowerShell 或 CMD）中执行：
+
+```bat
+git clone https://github.com/wynxing/xiangsu-mcp-plus-win.git
+cd xiangsu-mcp-plus-win
+npm ci
+
+:: 执行插件安装（支持自动发现像塑路径）
+node scripts/install.mjs
+```
+
+> [!TIP]
+> 如需提前预览将写入的文件而不真正落盘，可运行 `node scripts/install.mjs --dry-run`。
+
+### 3. 配置 MCP 客户端
+
+#### 在 Claude Desktop 中使用
+编辑 `%APPDATA%\Claude\claude_desktop_config.json`，在 `mcpServers` 中增加：
+
+```json
+{
+  "mcpServers": {
+    "xiangsu-plus": {
+      "command": "node",
+      "args": [
+        "C:\\path\\to\\xiangsu-mcp-plus-win\\src\\server.mjs"
+      ],
+      "env": {
+        "XIANGSU_MCP_URL": "http://127.0.0.1:17320/mcp"
+      }
+    }
+  }
+}
+```
+
+#### 在 Cursor / Windsurf / Roo Code 中使用
+在对应的 MCP 配置文件中添加：
+
+```json
+{
+  "mcpServers": {
+    "xiangsu-plus": {
+      "command": "node",
+      "args": [
+        "C:/path/to/xiangsu-mcp-plus-win/src/server.mjs"
+      ]
+    }
+  }
+}
+```
+
+配置完成后重启客户端，调用 `ext_status` 工具确认 `connected: true` 且各扩展功能自检正常即可开始使用。
+
+---
 
 ## 许可与来源
 
 MIT。版权与归属见 [LICENSE](LICENSE) 和 [NOTICE](NOTICE)。
 
-工程生命周期、回环令牌 RPC 和官方转发，改编自 [Muqian-Sun/xiangsu-mcp-plus](https://github.com/Muqian-Sun/xiangsu-mcp-plus)（MIT，核对到提交 `05d83470`，v0.9.0）。Windows 用户插件目录 `%LOCALAPPDATA%\DouyinAR\Plugins\v<短版本>\Local` 的约定参考了 [sleepyquq/xiangsu-mcp](https://github.com/sleepyquq/xiangsu-mcp)（MIT）。那个仓库的文件会话桥和场景工具没有搬进来，也不能代替这里要补的工程开关。
+工程生命周期、回环令牌 RPC 和官方转发，改编自 [Muqian-Sun/xiangsu-mcp-plus](https://github.com/Muqian-Sun/xiangsu-mcp-plus)（MIT，核对到提交 `05d83470`，v0.9.0）。Windows 用户插件目录 `%LOCALAPPDATA%\DouyinAR\Plugins\v<短版本>\Local` 的约定参考了 [sleepyquq/xiangsu-mcp](https://github.com/sleepyquq/xiangsu-mcp)（MIT）。设计说明见 [docs/DESIGN.md](docs/DESIGN.md)。
 
-设计说明见 [docs/DESIGN.md](docs/DESIGN.md)。在本仓库里改代码的方式见 [AGENTS.md](AGENTS.md)。
+---
 
-## 这一版做什么
+## 核心特性与设计细节
 
-- 安装用户插件 `XiangsuMcpPlus`。安装前备份 `plugins.config.json`，保留其他插件条目。从 npx 缓存运行时，会先把插件代码复制到状态目录。
-- stdio MCP 转发官方工具。默认 `http://127.0.0.1:17320/mcp`，可用 `XIANGSU_MCP_URL` 改。官方调用只发一次；发出后断线或超时不会自动重放。
-- 每个工程窗口在 `127.0.0.1` 上开随机端口，使用随机 Bearer 令牌。状态文件只留给当前用户。日志和 `ext_status` 会抹掉令牌。
-- 用进程启动时间丢掉已经退出或 pid 被复用的实例记录。Windows 读 CIM `CreationDate`，Linux 读 `/proc`。不使用 macOS 的 `ps -o lstart`。
-- `ext_status` 报告官方连通、安装结果、每个窗口的 `self_check`。缺内部模块时失败，不假装成功。
-- 已有工程窗口时：`project_open` / `project_new` / `project_close`。
-- 没有工程窗口时：明确返回 `WINDOWS_COLD_START_UNVERIFIED`。本版不会去启动 `Douyin AR.exe`。
+- **用户插件安全安装**：安装用户插件 `XiangsuMcpPlus`。安装前备份 `plugins.config.json`，保留其他既有插件。从 npx 缓存运行时，会先把插件代码复制到状态目录。
+- **stdio MCP 透传转发**：默认连接 `http://127.0.0.1:17320/mcp`，可用 `XIANGSU_MCP_URL` 自定义。官方调用单次发出，断线或超时绝不自动重放。
+- **本地高强度隔离**：每个工程窗口在 `127.0.0.1` 上分配随机端口，使用随机高熵 Bearer 令牌。状态文件与令牌在 Windows 上强制应用 NTFS DACL，仅允许当前用户读写；日志与 `ext_status` 严格抹除令牌。
+- **精确防 PID 复用**：用进程启动时间丢弃已退出或 PID 被复用的实例记录。Windows 读 CIM `CreationDate`，Linux 读 `/proc`。
+- **健康度与自检 (`ext_status`)**：报告官方连通性、插件安装版本、每个窗口的 `self_check`。缺内部模块时明确报错，拒绝假阳性。
+- **受控工程生命周期**：
+  - 已有工程窗口时：安全支持 `project_open` / `project_new` / `project_close`。
+  - 零工程窗口时：支持 Windows 无头后台冷启动引导（`bootstrapEditor`），自动以最小化模式拉起编辑器并接管预热窗口（返回 `WINDOWS_COLD_START_READY`），不抢占前台焦点。
+- **曲库能力**：`music_categories`、`music_list`、`music_search` 提供分类与检索；`music_apply` 执行安全导入；`music_verify` 进行只读双向持久化比对（核对 `soundID`、`MusicInfo.json` 与组件绑定）。
+- **图标标准化裁切**：`icon_set` 使用 `sharp` 库在本地按 EXIF 转正、保持中心正方形、以 Lanczos3 算法缩放至 360×360 PNG 上传；`icon_open` 调出编辑器图标窗口。
 
-曲库工具已注册。9.8.3 上只核对过设计说明里那一条可丢弃工程的导入、保存和 `music_verify`，不是全部曲库验收。`music_categories`、`music_list`、`music_search` 返回 `category_code` 或 `music_id`，以及可原样交回 `music_apply` 的 `selection`（`source`、`category_code` 或 `query`、`page_cursor`）。`music_apply` 只按这个 `music_id` 再读同一页，调用一次 `setDouyinMusicInfo`，不把本地音频文件导进工程。`imported` 为真只表示这次调用前不存在的 `Assets/NoImportAsset/<music_id>/MusicInfo.json` 在调用后作为普通文件出现在同一工程里，标题在两边都非空时一致。`confirmed` 和 `bound` 仍为假，`binding` 为 `unconfirmed`。调用前已有的文件、同标题的另一条 id、符号链接、跑出工程的路径、或调用期间工程路径改变，都不是这次导入，也不是当前绑定。写完读不到、对不上、或调用中断，都不会再发一次。多个窗口时曲库工具也要 `project_path` 或 `instance_id`。`music_apply` 沿用当时的允许/拒绝路径规则，并要求插件路径和官方实例路径仍是同一个工程。`features.music` 为假时曲库工具失败，不把 `features.project` 判失败。
+---
 
-`icon_set` 和 `icon_open` 已注册，但还没有在像塑 9.8.3 里读回。多个工程窗口时必须给出 `project_path` 或 `instance_id`。插件先做 `features.icon` 自检，缺模块就失败，工程开关仍可用。`icon_set` 先在本机做成 360×360 的新 PNG，再交给那个窗口写到编辑器报告的图标路径并上传一次。上传返回值不是 `true`、或请求断线、超时时，不自动再传，也不把结果说成成功。这不是提交审核：不勾协议、不点提交、不发布、不调用付费生成。`icon_open` 只调用 `showIconCreationWindow`，不声称窗口已经可见，也不去最小化。
+## 环境变量配置
 
-360×360 的图标图由 `src/icon-image.mjs` 在本机生成。它按文件头识别 png、jpeg、gif、webp，先按 EXIF 转正，再按较短边裁出正方形（左/上偏移是 `floor((源边 - 边长) / 2)`，多出来的一像素留在右侧或下侧），然后用 lanczos3 缩放到 360 的新 PNG。小于 360 的图会放大，不留边。源文件不改。不调用 macOS `sips`。依赖 `sharp` 0.34.5，安装时用 `npm ci`，它会按当前系统拉取对应的预编译包（Windows 为 `sharp-win32-x64`）。
+请勿将个人安装路径硬编码进代码，可通过以下环境变量进行灵活配置：
 
-## 环境
+| 环境变量 | 作用与说明 |
+| :--- | :--- |
+| `XIANGSU_EDITOR_ROOT` | 像塑产品根目录。设置之后不再猜测其他路径。 |
+| `XIANGSU_EDITOR_EXE` | 直接显式指定 `Douyin AR.exe` 的完整路径。 |
+| `XIANGSU_PLUGIN_ROOT` | 跳过自动探测，直接安装到指定的 `Local` 插件目录。 |
+| `XIANGSU_LOCALAPPDATA` | 覆盖默认的 `LOCALAPPDATA` 路径。 |
+| `XIANGSU_MCP_URL` | 官方 MCP 端口地址（默认 `http://127.0.0.1:17320/mcp`）。 |
+| `XIANGSU_MCP_PLUS_STATE` | 状态与日志存储目录。默认 `%USERPROFILE%\.xiangsu-mcp-plus-win`。 |
+| `XIANGSU_ALLOW_PROJECTS` | **路径白名单**。以 `\|` 分隔的绝对路径列表。配置后，打开/新建/关闭仅允许在这些目录下执行。 |
+| `XIANGSU_DENY_PROJECTS` | **路径黑名单**。以 `\|` 分隔的绝对路径列表。命中黑名单时优先拦截并返回 `PROTECTED_PROJECT`。 |
 
-- Windows 上的像塑 / Douyin AR。本仓库的合同测试没有在 9.8.3 编辑器里跑过。
-- Node.js 22 或更新。开发机上的合同测试用的是 Node 22；CI 同时覆盖 Node 22 和 24。
-- 官方 MCP 管理器一般在 `127.0.0.1:17320`。实例端口由官方分配，不要写成固定的 17321。
+---
 
-产品根目录是同时放着 `Resources` 和可执行文件的那一层。可执行文件可以是 `<产品根>\Douyin AR.exe`，也可以是 `<产品根>\electron\Douyin AR.exe`。`electron\version` 是 Electron 的版本，不能当成像塑版本。像塑版本读的是 exe 里的 `FileVersion` 字符串，用户插件目录只用前三段（例如 `9.8.3.942073156` → `v9.8.3`）。
+## 安装、升级与回滚
 
-不要把个人安装路径写进程序。用下面的环境变量：
-
-| 变量 | 作用 |
-| --- | --- |
-| `XIANGSU_EDITOR_ROOT` | 产品根。设置之后不再猜其他位置。 |
-| `XIANGSU_EDITOR_EXE` | 直接给出 `Douyin AR.exe`。 |
-| `XIANGSU_PLUGIN_ROOT` | 跳过探测，装到这个 `Local` 目录。 |
-| `XIANGSU_LOCALAPPDATA` | 覆盖 `LOCALAPPDATA`。 |
-| `XIANGSU_MCP_URL` | 官方 MCP 地址。 |
-| `XIANGSU_MCP_PLUS_STATE` | 状态目录。默认是用户主目录下的 `.xiangsu-mcp-plus-win`。像塑进程通常拿不到这个变量，插件仍写默认目录；stdio 会同时查看默认目录。 |
-| `XIANGSU_ALLOW_PROJECTS` | 可选。用 `|` 隔开的绝对路径。设置了环境变量，或 `config.local.json` 里写了 `allowProjects` 数组，打开、新建、关闭就只发生在这些根目录里。两者都没写时，不在黑名单里的普通路径可用。空字符串或空数组是明确的收窄，不是「没配置」。已有的 `allowProjects` 会原样保留。 |
-| `XIANGSU_DENY_PROJECTS` | 黑名单，用 `|` 分隔，或写在未跟踪的 `config.local.json` 的 `denyProjects`。命中优先于默认允许和白名单，返回 `PROTECTED_PROJECT`。 |
-
-未设置根目录时，只在运行中的 `Douyin AR.exe` / `orionkit.exe`，以及 `%LOCALAPPDATA%\Douyin AR`、`Program Files\Douyin AR` 里查找。
-
-## 安装
-
-从 git 检出时用锁定的依赖；`release/` 里的 `.tgz` 是 `npm pack` 的结果，不含 lockfile，解压后用 `npm install`。
+### 从源码安装
 
 ```bat
 npm ci
@@ -61,133 +149,65 @@ set XIANGSU_EDITOR_ROOT=D:\path\to\Douyin AR
 node scripts/install.mjs
 ```
 
-先看会写什么、不落盘：
+安装机制保证：
+1. 现有 `plugins.config.json` 和旧版本插件目录会自动备份至 `install-backups/`。
+2. 新插件先在临时目录校验完整性，再原子替换旧目录。写入失败时旧目录原样保留。
+3. 令牌文件在 Windows 上强制设置仅当前用户可访问的 DACL 并读回校验。
 
-```bat
-node scripts/install.mjs --dry-run
-```
-
-安装会：
-
-1. 先把现有 `plugins.config.json` 和将要换掉的 `XiangsuMcpPlus` / `XiangsuMcpExt` 目录复制到 `install-backups`。配置文件旁边也会留一份 `plugins.config.json.bak-<时间>`。
-2. 新插件先写到临时目录并核对 `index.js`、清单和标记都在，再替换旧目录。写入失败时旧目录还在。
-3. 其他插件原样保留。
-4. 生成的 `index.js` 仍是清单里的 `entry`。同目录有一份只写 `"type": "commonjs"` 的 `package.json`。Node 用离文件最近的 `package.json` 判断 `.js` 是 CommonJS 还是 ES 模块。用户主目录若是 `"type": "module"`，而插件目录没有自己的 `package.json`，`index.js` 里的 `require` 会在加载时失败。不要改主目录的 `package.json`，也不要把入口改成尚未在编辑器里核对过的 `.cjs`。
-5. `editor-plugin` 会复制到状态目录 `editor-plugin/<版本>/<构建号>/`。入口用绝对路径加载那里的 `runtime.cjs`，解压目录或 npx 缓存删掉之后仍然找得到。
-
-令牌文件在 Windows 上会换成只含当前用户的 DACL，并读回来核对。核对失败就删掉令牌文件并停止监听。POSIX 上目录是 `0700`，文件是 `0600`。
-
-同一版本只有在构建号一致、这份 CommonJS 边界还在、并且状态目录里的 `runtime.cjs` 还在时，再次安装才是 `kept`。0.1.2 没有把插件 RPC 的 `fetch failed` 原因码写出来，安装 0.1.3 会替换它。`--force` 仍会重装。
-
-插件只在带 `--projectType=project` 的工程窗口里启动。已经开着的窗口不会重新加载。装完 0.1.3 之后，关掉可丢弃的工程窗口再打开一次。
-
-从已经装过 0.1.2 的机器升级时，不要改 `%USERPROFILE%\package.json`，也不要改像塑程序目录：
-
-```bat
-set XIANGSU_EDITOR_ROOT=D:\path\to\Douyin AR
-node scripts\install.mjs --dry-run
-node scripts\install.mjs
-```
-
-需要替换时，`--dry-run` 的 `action` 是 `dry-run`，`version` 是 `0.1.3`，`requires_window_reopen` 为真。若 `action` 已是 `kept` 且 `version` 仍是 `0.1.2`，跑到的还是旧包。
-
-从源码包安装：
-
-```bat
-tar -xf xiangsu-mcp-plus-win-0.1.11.tgz
-cd package
-npm ci
-set XIANGSU_EDITOR_ROOT=D:\path\to\Douyin AR
-node scripts\install.mjs
-```
-
-插件目录是 `%LOCALAPPDATA%\DouyinAR\Plugins\v9.8.3\Local\XiangsuMcpPlus@0.1.11`。运行时代码在 `%USERPROFILE%\.xiangsu-mcp-plus-win\editor-plugin\0.1.11\<构建号>\`。不要为了让窗口出现而改用户主目录的 `package.json`。stdio 即使设置了别的 `XIANGSU_MCP_PLUS_STATE`，也会读取默认主目录里的实例文件。同一个 pid 在两个目录里都有活记录且端口或令牌不同时，服务拒绝选择。
-
-`features.project` 在类直接导出（`Project.prototype.isProjectChanged`）或 9.8.3 命名空间（`Project.Project.prototype.isProjectChanged`）时可以为真；两条都没有、也没有已打开工程上的实例方法时仍为假。关闭还要求插件方法和官方 `project_status` 的 `is_changed` 都是 `false`，并且官方 `scene_dirty` 不是 `true`。这还不是编辑器验收，装完要重新打开可丢弃窗口后再看 `ext_status`。
-
-0.1.3 的插件 RPC 每次单独连接（`Connection: close`），避免复用一条已经被对端关掉的 keep-alive 连接。失败时工具文本是 `PLUGIN_RPC_FAILED(<方法>): fetch failed (<原因码>)`，不再只有 `fetch failed`。插件在 `project_launch` / `project_close` 开始和正常结束时写 `rpc start` / `rpc done`，抛错时仍写 `rpc error`。日志和错误里不包含 Bearer 令牌。早先一次 `fetch failed` 没有留下原因码，所以还不能断定连接复用就是根因。后来 0.1.3 在 9.8.3 上有一次受控的新建、关闭、再打开没有再现这个错误，这也不证明原因已经消失。判断标准和这次实机各自证明了什么，见 [AGENTS.md](AGENTS.md)。关闭、白名单和脏状态检查没有放宽。
-
-0.1.5 写 DACL 时不从 `PATH` 找 `powershell.exe` 或 `whoami.exe`，只用 `SystemRoot` 下的绝对路径。只有 `System32`、没有 `WindowsPowerShell\v1.0` 的进程也能定位到系统里的 `powershell.exe`。找不到就失败，不跳过 ACL。插件启动失败写到 `logs/plugin.log` 的 `init failed`，并接住异步拒绝。这不是像塑实机验收。
-
-0.1.6 把同一条绝对路径用到 stdio 的进程启动时间检查和正在运行的编辑器发现。启动时间查不到仍是错误，不是空窗口列表。空闲工程进程（插件已连接、`project_path` 为空）可以发起 `project_open` / `project_new`。首页进程可能把工程放进这个进程，也可能另开一个进程；读回路径对上的那个 pid 才是结果。已经显示工程的窗口不会被换成新工程。没有插件进程时仍不启动编辑器。文件关联不是这个请求。这不是像塑实机验收。
-
-0.1.7 把 0.1.6 与已完成的图标、曲库改动放进同一个安装包。`npm ci` 会安装 `sharp` 0.34.5 的当前平台预编译包。图标和曲库的编辑器读回仍未验收。
-
-0.1.9 把曲目结果改成导入和绑定两层。`imported: true` 只表示这次新出现的 `MusicInfo.json`。`confirmed` 和 `bound` 保持 `false`，当前场景绑定仍未确认。旧文件、同标题的另一条曲目、符号链接和工程路径变化都不会被报成这次导入或绑定。同一次包里的 `project_new` 在客户端断开后不再调用 `save_project`，并把阶段写到 `logs/stdio.log`。`exit <code>` 只说明 Node 走到了 exit 事件。没有后续行不能单独证明进程被杀掉。这不是 r1 断线的原因结论，也不是像塑实机验收。
-
-0.1.10 增加只读的 `music_verify`。它不调用 `setDouyinMusicInfo`，也不保存工程。用户自己用官方工具保存之后，可以用当前 `project_id`、`music_id` 和资源的标题、作者、时长再读一次。只有已保存的 `soundID`、`MusicInfo.json` 和场景里唯一的「抖音音乐」音频组件都对上，才返回 `persisted`、`confirmed`、`bound` 为真，并且 `imported` 仍为假。未保存、旧 `soundID`、旧资源或工程身份变了，都保持未确认。`music_apply` 的语义不变。
-
-0.1.11 只改 stdio 对 `Assets/main.scene` 的识别。9.8.3 把音频组件写成 `DynamicComponent`，`name` 或 `className` 为 `AudioComponent`。身份、dirty、`soundID` 和元数据门没有放宽。`editor-plugin` 源码没有改。安装器仍按包版本比较：0.1.11 与已安装的 0.1.10 版本不同，所以启动服务时会替换插件目录并把 `requires_window_reopen` 设为真。这个标记来自版本号，不是插件逻辑变化。`music_verify` 在 stdio 进程里执行，不需要为这次修复重开已经打开的工程窗口。
-
-9.8.3 上已经核对的只是一条可丢弃工程，不是全部 `editor_acceptance`。实测包头是 `77132ee05f80aede42d62feb20c91e019c092fef`。stdio 报 0.1.11；当时打开的窗口仍加载构建号同为 `75e612dc2c038b4c` 的 0.1.10 插件，9 个插件源文件字节相同。磁盘上被写成 0.1.11 目录，不等于该窗口已加载另一份逻辑。重开窗口可能让工程自动变脏，而文件哈希不变；要确认已保存的曲目，先明确官方保存一次，等官方和插件都干净，再 `music_verify`。这次干净后的正例是 `persisted`、`confirmed`、`bound` 为真，`imported` 为假，`reason` 为 `PERSISTED`。错误曲目 id 是 `SOUND_ID_MISMATCH`，错误工程 id 是 `PROJECT_ID_MISMATCH`。0.1.9 上同一轮记录还有两轮新建、关闭、打开，一次图标上传，以及一次 apply 后的明确保存。plus 仍不自己启动编辑器。早先一次 `project_new` 在 `project_launch` 之后断开，原因还不知道。`ext_status` 里的 `editor_acceptance` 仍是 `unverified`。细节在 `docs/DESIGN.md`。
-
-把 stdio 服务交给 MCP 客户端时，用本机的 `node` 运行 `src/server.mjs`，工作目录是本包根目录。服务启动时会再尝试安装；安装失败只记在 `ext_status.plugin_install`，官方转发仍然可以启动。
-
-## 回滚与卸载
+### 卸载插件
 
 ```bat
 node scripts/uninstall.mjs --dry-run
 node scripts/uninstall.mjs
 ```
 
-卸载只删除 `XiangsuMcpPlus` / `XiangsuMcpExt` 的目录和配置项，不删除其他插件，也不删除备份。
+卸载只清理 `XiangsuMcpPlus` / `XiangsuMcpExt` 目录与配置项，保留其他插件和备份。
 
-成功安装时，状态目录 `install-backups/<时间戳>-<pid>/` 里同时有两样东西：安装前的完整 `plugins.config.json`，以及被替换的插件目录（例如 `XiangsuMcpPlus@<旧版本>`）。同目录旁边的 `plugins.config.json.bak-<时间戳>` 只是配置文件的另一份副本，里面没有插件代码。只把 `.bak` 拷回去会留下新版本的代码目录，编辑器仍可能加载新代码。
-
-回到这一次安装之前：
+### 回滚到前一版本
 
 ```bat
 node scripts/rollback.mjs --plugin-root "%LOCALAPPDATA%\DouyinAR\Plugins\v9.8.3\Local" --backup "%USERPROFILE%\.xiangsu-mcp-plus-win\install-backups\<时间戳>-<pid>"
 ```
 
-这会按备份里的配置写回 `plugins.config.json`，把备份中的插件目录放回 `Local`，并删掉这次新装上、备份里没有的 `XiangsuMcpPlus` / `XiangsuMcpExt` 目录。其他插件的目录和配置项保持备份里的样子。备份目录本身不会被删。卸载之后，已经打开的窗口里可能还留着旧插件，关掉这些窗口即可。
+---
 
-## 冒烟测试（需要你自己的 Windows 和像塑）
+## 冒烟测试（本地实机核验）
 
-下面的步骤用来在你自己的 Windows 和像塑上复查。`npm test` 是模拟。2026-11-19 在像塑 9.8.3、包 0.1.3 上有过一次隔离的新建、关闭、再打开，官方和磁盘读回一致；那不是全覆盖验收。`ext_status.contract.editor_acceptance` 仍是 `unverified`。再做写操作之前仍要先看 `ext_status`。规则见 [AGENTS.md](AGENTS.md)。
+`npm test` 为单元与合同 Mock 测试。在实机上进行集成复查时，请遵循以下流程：
 
-1. 准备一个新建的空目录，名字类似 `_mcp_win_probe-<时间>`。不要用不能丢弃的工程，也不要把它放进那些工程里面。
-2. 不能碰的目录放进 `XIANGSU_DENY_PROJECTS` 或 `config.local.json` 的 `denyProjects`。没有配置白名单时，其他普通路径可以操作。若已经写了 `allowProjects` 或 `XIANGSU_ALLOW_PROJECTS`，就只在那些根目录里操作。不要把这些路径写进仓库。
-3. 安装插件后，手工打开一个可丢弃的工程窗口，让插件加载。像塑同时大约只能开两个工程窗口。
-4. 调用 `ext_status`。确认 `plugin_install.action` 不是 `failed`，官方 `connected` 为真，测试窗口的 `self_check.features.project` 为真。若为假，列出的 `missing` 就是当前编辑器缺少的内部模块，停在这里，不要继续开关窗口。
-5. 用官方 `list_instances` 只读核对测试窗口。官方工具由本服务转发，断线后不会自动再发。
-6. `project_close` 只关测试窗口。读不到工程路径、路径和官方实例不一致、或不能证明没有未保存修改时都会拒绝。关窗前会再读一次脏状态。这 300 毫秒里变成脏就拒绝退出；`discard_changes` 不能代替这次证明。确认别的窗口还在。
-7. `project_open` 再打开测试工程目录（里面要有 `effect.dyehpj`）。已经打开时会原样返回。
-8. `project_new` 指到一个还不存在的空目录，且不在黑名单里。若配置了白名单，目录还必须落在其中。保存前会再确认目录仍是空的，并要求官方实例路径和插件里的临时工程路径一致、都不在黑名单里。发起窗口如果本来就显示着一个工程，它必须还停在那个工程上。空闲窗口可以自己变成新建结果。对不上就不会调用 `save_project`。客户端在 `project_launch` 已经返回之后断开时，结果是 `PROJECT_NEW_INTERRUPTED`，不是成功；不会补一次保存，也不会再发一次新建。阶段记在状态目录的 `logs/stdio.log`。
-9. 关掉新建窗口，删掉临时目录。不要点提交审核，不要勾选协议。
+1. **测试目录准备**：准备一个类似 `_mcp_win_probe-<时间>` 的新建空目录。严禁使用真实、不可丢弃的特效工程。
+2. **保护黑名单**：将重要工程路径加入 `XIANGSU_DENY_PROJECTS`。
+3. **健康检查**：调用 `ext_status`，确认 `plugin_install.action !== 'failed'`、官方 `connected: true`，且窗口 `self_check.features.project: true`。
+4. **生命周期验证**：
+   - 调用 `project_new` 创建临时空工程，核实创建与保存正常。
+   - 调用 `project_close` 关闭测试窗口，核对无未保存修改后安全关闭。
+   - 调用 `project_open` 重新打开该临时工程，验证路径对齐。
+5. **曲库与图标验证**：在可丢弃工程上验证 `music_categories` -> `music_search` -> `music_apply` -> 官方保存 -> `music_verify`，以及 `icon_set` 360×360 裁切上传。
+6. **清理**：测试结束后关闭窗口并删除临时目录。
 
-没有插件进程时，`project_open` 应返回 `NO_EDITOR_WINDOW` 和 `WINDOWS_COLD_START_UNVERIFIED`，并且不会启动编辑器。只有一个空闲工程进程时，可以对一个可丢弃的空目录调用 `project_new`，再对一个含 `effect.dyehpj` 的可丢弃工程调用 `project_open`。结果里的 pid 可以是原来的空闲进程，也可以是新进程；插件路径和官方实例路径都要读回成目标路径。`PATH` 里没有 `WindowsPowerShell\v1.0` 时，`ext_status` 仍应列出这个窗口，而不是 `PROCESS_START_CHECK_FAILED`。这两步还不是已经完成的实机验收。
+---
 
-曲库还要在可丢弃窗口上另做一次，做完不要保存到不能丢的工程，也不要勾协议或提交审核：
-
-1. `ext_status` 里该窗口的 `self_check.features.music` 必须为真。为假就停，缺的是 `missing` 里的曲库模块，不是工程开关。
-2. `music_categories`，再 `music_search`（或 `music_list`）。记下一条的 `music_id` 和整份 `selection`。
-3. `music_apply` 把这份 `selection` 原样传回，并带上同一个 `project_path` 或 `instance_id`。`imported` 为真、`confirmed` 为假、`bound` 为假、`saved` 为假，且 `readback.asset` 是 `Assets/NoImportAsset/<music_id>/MusicInfo.json`，只说明这次导入了该 id 的资源文件。`binding` 应为 `unconfirmed`。不要把这个结果当成当前场景已经绑上，也不要因为还没保存就看不到 `soundID` 而再调一次。
-4. 需要保留这次曲目时，单独调用一次官方 `save_project`。保存之后用 `music_verify` 只读核对，参数是当前官方 `project_id`、这条 `music_id`，以及 `MusicInfo.json` 里的标题、作者和时长。`persisted`、`confirmed`、`bound` 都为真且 `imported` 为假，才表示已保存的绑定对上了。不要为了这一步再调用 `music_apply`。
-5. 若返回 `MUSIC_APPLY_UNCONFIRMED`、`MUSIC_APPLY_MISMATCH` 或传输失败，不要再调一次。错误里若有可读方法名，记下来即可。不要把合同测试的通过写成编辑器验收。
-
-图标在同一个可丢弃工程上另做一次，不要提交审核、勾协议、发布或付费：
-
-1. `ext_status` 里该窗口的 `self_check.features.icon` 必须为真。为假就停。
-2. 准备一张可丢弃的 png、jpeg、gif 或 webp，绝对路径交给 `icon_set`，并带上该窗口的 `project_path` 或 `instance_id`。
-3. 返回里 `uploaded` 为真、`calls` 为 1、`prepared` 是 360×360，`project_icons` 里的路径还能读到刚写入的 PNG。对不上或 `ICON_UPLOAD_UNCONFIRMED` 时不要再传。
-4. `icon_open` 只要求插件调用了 `showIconCreationWindow`。不要把窗口是否出现在屏幕上当成已经证明。
-
-## 开发测试
+## 开发与测试
 
 ```bat
 npm ci
 npm test
 ```
 
-`npm test` 就是 `node --test`。GitHub Actions 在 `ubuntu-latest` 和 `windows-latest` 上分别用 Node 22 和 Node 24 运行同一命令。
+`npm test` 基于 Node.js 内置测试框架（`node --test`）。GitHub Actions 在 `ubuntu-latest` 和 `windows-latest`（覆盖 Node 22 和 Node 24）上自动执行测试矩阵。
 
-这些测试覆盖路径、版本和资源目录、安装保留其他插件、缺模块时的 `ext_status`、令牌与鉴权、过期窗口、重复打开和新建、安全关闭，以及官方转发不重放。它们不打开像塑。
-
-源码包：
+### 构建发布包
 
 ```bat
 npm run pack
 ```
 
-产物在 `release/xiangsu-mcp-plus-win-0.1.11.tgz`，旁边有 `.sha256`。解压后的包包含 `npm-shrinkwrap.json`、`scripts/install.mjs`、`scripts/uninstall.mjs`、`scripts/rollback.mjs` 和 `src/server.mjs`。在解压目录执行 `npm ci` 才会装上 `sharp` 0.34.5 的当前平台预编译包。包里没有官方程序、素材或令牌。
+产物将输出在 `release/xiangsu-mcp-plus-win-<version>.tgz` 及其对应的 `.sha256` 校验和文件中。
+
+---
+
+## 社区规范与安全
+
+- **参与贡献**：请参阅 [CONTRIBUTING.md](CONTRIBUTING.md) 了解代码规范、提交格式与安全红线。
+- **安全策略与漏洞报告**：请参阅 [SECURITY.md](SECURITY.md) 了解防御架构与负责任披露方式。
+- **开源许可证**：基于 [MIT License](LICENSE) 开源。
