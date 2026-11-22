@@ -155,6 +155,23 @@ export function bootstrapEditor({
   }
   const exe = editor.exe;
   if (platform === 'win32' && minimized) {
+    if (env?.SSH_CONNECTION || env?.SSH_CLIENT) {
+      try {
+        const schtasks = getWindowsExe('schtasks.exe', { env, existsSync, systemRoot });
+        const taskName = 'XiangsuColdStart';
+        execFile(schtasks, ['/create', '/tn', taskName, '/tr', `"${exe}"`, '/sc', 'ONCE', '/st', '23:59', '/f'], {
+          windowsHide: true,
+          timeout: 5000,
+        });
+        execFile(schtasks, ['/run', '/tn', taskName], {
+          windowsHide: true,
+          timeout: 5000,
+        });
+        return { action: 'spawned', exe, minimized: true, method: 'schtasks-session-penetrate' };
+      } catch {
+        // Fall back to PowerShell
+      }
+    }
     let psExe;
     try {
       psExe = getWindowsExe('powershell.exe', { env, existsSync, systemRoot });

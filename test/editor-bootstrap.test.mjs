@@ -35,6 +35,30 @@ test('bootstrapEditor on win32 minimized uses powershell Start-Process -WindowSt
   assert.ok(script.includes("Start-Process -FilePath 'C:\\Users\\test\\AppData\\Local\\Douyin AR\\electron\\Douyin AR.exe' -WindowStyle Minimized"));
 });
 
+test('bootstrapEditor under SSH uses schtasks session penetration on Windows', () => {
+  const calls = [];
+  const res = bootstrapEditor({
+    platform: 'win32',
+    minimized: true,
+    env: { SSH_CONNECTION: '100.79.222.28 54321 100.71.36.14 22' },
+    discover: () => ({ exe: 'C:\\Douyin AR\\electron\\Douyin AR.exe' }),
+    windowsExe: (name) => `C:\\Windows\\System32\\${name}`,
+    execFile: (cmd, args, opts) => {
+      calls.push({ cmd, args, opts });
+      return '';
+    },
+  });
+  assert.equal(res.action, 'spawned');
+  assert.equal(res.minimized, true);
+  assert.equal(res.method, 'schtasks-session-penetrate');
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].cmd, 'C:\\Windows\\System32\\schtasks.exe');
+  assert.ok(calls[0].args.includes('/create'));
+  assert.ok(calls[0].args.includes('XiangsuColdStart'));
+  assert.equal(calls[1].cmd, 'C:\\Windows\\System32\\schtasks.exe');
+  assert.ok(calls[1].args.includes('/run'));
+});
+
 test('bootstrapEditor falls back to direct spawn when powershell fails', () => {
   let unreferenced = false;
   const spawned = [];
