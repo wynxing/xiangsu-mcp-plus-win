@@ -213,13 +213,78 @@ test('two idle windows are not guessed, and a new temp plus the idle window is n
   assert.equal(calls.some((call) => call[1] === 'save_project'), false);
 });
 
-test('no project window is an explicit unsupported cold start and spawns nothing', async () => {
+test('no project window with cold start disabled (bootstrapEditor: null) is an explicit unsupported cold start', async () => {
   const { d, calls } = world();
   d.listInstances = () => [];
+  d.bootstrapEditor = null;
   const err = await new Projects(d).open({ path: projectDir() }).catch((e) => e);
   assert.match(err.message, /NO_EDITOR_WINDOW/);
-  assert.match(err.message, /WINDOWS_COLD_START_UNVERIFIED/);
+  assert.match(err.message, /WINDOWS_COLD_START_READY/);
   assert.equal(calls.some((call) => call[1] === 'project_launch'), false);
+});
+
+test('zero windows triggers bootstrapEditor and waits for new window to come online', async () => {
+  const { d, calls, windows } = world({ paths: [] });
+  let bootstrapped = false;
+  const target = projectDir();
+  d.bootstrapEditor = async () => {
+    bootstrapped = true;
+    windows.set(200, null);
+  };
+  d.listInstances = () => (bootstrapped ? [...windows].map(([pid]) => ({ pid })) : []);
+  d.callPlugin = async (method, params, opts) => {
+    calls.push(['plugin', method, params, opts?.pid]);
+    if (method === 'status') return { projectPath: windows.get(opts.pid) ?? null };
+    if (method === 'project_state') return { project_path: windows.get(opts.pid) ?? null, changed: false, scene_ready: true };
+    if (method === 'project_launch' && params.operation === 'openLocal') {
+      windows.set(opts.pid, target);
+      return { requested: 'openLocal', reused_current: true, created_pid: opts.pid };
+    }
+    return {};
+  };
+  const opened = await new Projects(d).open({ path: target });
+  assert.equal(bootstrapped, true);
+  assert.equal(opened.pid, 200);
+  assert.equal(opened.project_path, target);
+});
+
+test('bootstrapTimeoutMs throws BOOTSTRAP_TIMEOUT if no window appears', async () => {
+  const { d } = world({ paths: [] });
+  let bootstrapped = false;
+  d.bootstrapEditor = async () => {
+    bootstrapped = true;
+  };
+  d.listInstances = () => [];
+  d.bootstrapTimeoutMs = 10;
+  const err = await new Projects(d).open({ path: projectDir() }).catch((e) => e);
+  assert.equal(bootstrapped, true);
+  assert.match(err.message, /BOOTSTRAP_TIMEOUT/);
+});
+
+test('zero windows triggers bootstrapEditor on project create', async () => {
+  const { d, calls, windows } = world({ paths: [] });
+  let bootstrapped = false;
+  const temp = path.join(tmpdir('xs-tmp-'), 'ProjectCreatedTmp', 'new');
+  d.bootstrapEditor = async () => {
+    bootstrapped = true;
+    windows.set(300, null);
+  };
+  d.listInstances = () => (bootstrapped ? [...windows].map(([pid]) => ({ pid })) : []);
+  d.callPlugin = async (method, params, opts) => {
+    calls.push(['plugin', method, params, opts?.pid]);
+    if (method === 'status') return { projectPath: windows.get(opts.pid) ?? null };
+    if (method === 'project_state') return { project_path: windows.get(opts.pid) ?? null, changed: false, scene_ready: true };
+    if (method === 'project_launch' && params.operation === 'createNew') {
+      windows.set(opts.pid, temp);
+      return { requested: 'createNew', reused_current: true, created_pid: opts.pid };
+    }
+    return {};
+  };
+  const target = path.join(tmpdir('xs-create-cold-'), 'new-target');
+  const created = await new Projects(d).create({ path: target });
+  assert.equal(bootstrapped, true);
+  assert.equal(created.pid, 300);
+  assert.equal(created.project_path, target);
 });
 
 test('duplicate new refuses a non-empty target before save_project', async () => {

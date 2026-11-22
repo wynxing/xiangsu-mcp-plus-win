@@ -2,7 +2,7 @@
 // Product root contains Resources. The executable is either
 // <root>\Douyin AR.exe or <root>\electron\Douyin AR.exe.
 // electron\version is Electron's version and is never the editor version.
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { readFileVersion, shortEditorVersion } from './peversion.mjs';
@@ -136,4 +136,53 @@ export function runningEditorExes({ execFile = execFileSync, platform = process.
   } catch {
     return [];
   }
+}
+
+export function bootstrapEditor({
+  env = process.env,
+  platform = process.platform,
+  discover = discoverEditor,
+  spawn: childSpawn = spawn,
+  execFile = execFileSync,
+  windowsExe: getWindowsExe = windowsExe,
+  minimized = true,
+  existsSync,
+  systemRoot,
+} = {}) {
+  const editor = discover({ env, platform });
+  if (!editor || !editor.exe) {
+    throw Error('BOOTSTRAP_FAILED: editor executable could not be discovered');
+  }
+  const exe = editor.exe;
+  if (platform === 'win32' && minimized) {
+    let psExe;
+    try {
+      psExe = getWindowsExe('powershell.exe', { env, existsSync, systemRoot });
+    } catch {
+      psExe = null;
+    }
+    if (psExe) {
+      try {
+        const escaped = exe.replace(/'/g, "''");
+        const script = `Start-Process -FilePath '${escaped}' -WindowStyle Minimized`;
+        execFile(psExe, ['-NoProfile', '-NonInteractive', '-Command', script], {
+          encoding: 'utf8',
+          windowsHide: true,
+          timeout: 10000,
+        });
+        return { action: 'spawned', exe, minimized: true, method: 'powershell-minimized' };
+      } catch {
+        // Fall back to direct detached spawn if powershell invocation fails
+      }
+    }
+  }
+  const child = childSpawn(exe, [], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: minimized,
+  });
+  if (child && typeof child.unref === 'function') {
+    child.unref();
+  }
+  return { action: 'spawned', exe, pid: child?.pid, minimized: false, method: 'spawn-detached' };
 }

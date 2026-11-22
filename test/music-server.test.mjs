@@ -104,7 +104,7 @@ test('music_search uses the only open window and refuses an ambiguous choice', a
   const cold = await dispatchTool(none.d, 'music_categories', {});
   assert.equal(cold.isError, true);
   assert.match(cold.content[0].text, /NO_EDITOR_WINDOW/);
-  assert.match(cold.content[0].text, /WINDOWS_COLD_START_UNVERIFIED/);
+  assert.match(cold.content[0].text, /WINDOWS_COLD_START_READY/);
   assert.equal(none.calls.some((call) => String(call[1]).startsWith('music_')), false);
 });
 

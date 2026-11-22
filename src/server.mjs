@@ -49,7 +49,7 @@ export function toolDefinitions() {
         'Diagnostics for this Windows bridge: official MCP connectivity, plugin install result, per-window self-check, and explicit unsupported states. ' +
         'features.project must be true before project_open / project_new / project_close. ' +
         'icon_set and icon_open run only when that window reports features.icon. Music tools require features.music. A missing icon or music module does not fail project tools. ' +
-        'Cold start without a project window is unsupported. This is not evidence that a real 像塑 editor accepted the plugin.',
+        'Cold start without a project window is supported via minimized editor bootstrap. This is not evidence that a real 像塑 editor accepted the plugin.',
       schema: z.strictObject({}),
       run: async (_args, d, projects) => {
         const official = await d.official.listTools().then(() => d.official.status());
