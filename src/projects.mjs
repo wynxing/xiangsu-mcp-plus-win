@@ -12,6 +12,7 @@
 // generation pid prefix, WINDOW_LIMIT retry, unsaved-change refusal.
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { bootstrapEditor } from './editor.mjs';
 import { KeyedMutex } from './mutex.mjs';
 import { normalizePath, pathApi, pathInside, samePath } from './paths.mjs';
 import { stateRootOf } from './plugininstall.mjs';
@@ -19,10 +20,10 @@ import { claimTarget, releaseTarget } from './target-lock.mjs';
 
 export const MAX_WINDOWS = 2;
 export const COLD_START = Object.freeze({
-  supported: false,
-  code: 'WINDOWS_COLD_START_UNVERIFIED',
+  supported: true,
+  code: 'WINDOWS_COLD_START_READY',
   detail:
-    'No verified Windows invocation starts the editor when no project process is running. This build does not start Douyin AR.exe and does not use file association. An idle project process with the plugin loaded can open or create; retry after that process is up.',
+    'Headless cold start is supported on Windows. When no project window is running, the editor is launched minimized and polled until an idle window appears.',
 });
 
 const isTempProject = (projectPath) => typeof projectPath === 'string' && projectPath.replace(/\\/g, '/').includes('/ProjectCreatedTmp/');
@@ -83,6 +84,8 @@ export class Projects {
     this.d = d;
     this.locks = d.locks ?? new KeyedMutex();
     this.platform = d.platform ?? process.platform;
+    this.bootstrapEditor = d.bootstrapEditor !== undefined ? d.bootstrapEditor : bootstrapEditor;
+    this.bootstrapTimeoutMs = d.bootstrapTimeoutMs ?? 30000;
   }
 
   normalize(input) {
@@ -195,6 +198,27 @@ export class Projects {
     if (!ok) throw Error(`SCENE_NOT_READY: window ${pid} did not finish loading its scene`);
   }
 
+  async ensureLauncher(windows) {
+    if (!windows.length) {
+      if (!this.bootstrapEditor) {
+        throw Error(`NO_EDITOR_WINDOW: ${COLD_START.detail} (${COLD_START.code})`);
+      }
+      await this.bootstrapEditor({ env: this.d.env, platform: this.platform });
+      const ready = await waitFor(
+        async () => {
+          const now = await this.windows();
+          return now.length > 0 ? now : null;
+        },
+        { timeoutMs: this.bootstrapTimeoutMs, sleep: this.d.sleep },
+      );
+      if (!ready) {
+        throw Error(`BOOTSTRAP_TIMEOUT: editor did not present a window within ${this.bootstrapTimeoutMs}ms`);
+      }
+      windows = ready;
+    }
+    return this.pickLauncher(windows);
+  }
+
   pickLauncher(windows) {
     if (!windows.length) throw Error(`NO_EDITOR_WINDOW: ${COLD_START.detail} (${COLD_START.code})`);
     const idle = windows.filter((w) => !w.project_path);
@@ -224,7 +248,7 @@ export class Projects {
         instance_id: await this.instanceIdForPid(already.pid, this.d.instanceTimeoutMs),
       };
     }
-    const launcher = this.pickLauncher(windows);
+    const launcher = await this.ensureLauncher(windows);
     return this.locks.run(launcher.pid, () => this.openLocked(abs, launcher.pid));
   }
 
@@ -285,7 +309,7 @@ export class Projects {
 
   async createHoldingTarget(abs) {
     this.assertTargetEmpty(abs);
-    const launcher = this.pickLauncher(await this.windows());
+    const launcher = await this.ensureLauncher(await this.windows());
     return this.locks.run(launcher.pid, () => this.createLocked(abs, launcher.pid, launcher.project_path || null));
   }
 

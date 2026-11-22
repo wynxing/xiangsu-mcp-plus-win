@@ -74,8 +74,8 @@ test('ext_status reports install, cold start, and redacts tokens without faking 
   const body = JSON.parse(result.content[0].text);
   assert.equal(body.plugin_install.action, 'failed');
   assert.equal(body.plugin_install.token, '[redacted]');
-  assert.equal(body.bootstrap.supported, false);
-  assert.equal(body.bootstrap.code, 'WINDOWS_COLD_START_UNVERIFIED');
+  assert.equal(body.bootstrap.supported, true);
+  assert.equal(body.bootstrap.code, 'WINDOWS_COLD_START_READY');
   assert.equal(body.phases.music.enabled, true);
   assert.equal(body.phases.music.editor_acceptance, 'unverified');
   assert.deepEqual(body.phases.icon.registered, ['icon_set', 'icon_open']);
